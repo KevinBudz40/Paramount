@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG System</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <div class="layout">
+
+    <!-- ── Sidebar ──────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>RAG System</h1>
+        <span class="badge" id="chunk-count">0 chunks</span>
+      </div>
+
+      <!-- M365 Connection -->
+      <section class="panel m365-panel" id="m365-panel">
+        <h2>Microsoft 365</h2>
+        <div id="m365-disconnected" class="m365-state">
+          <p class="m365-hint">Connect to sync Exchange email, Outlook Calendar, and SharePoint.</p>
+          <button class="m365-connect-btn" id="m365-connect-btn" onclick="connectM365()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 23 23" fill="none">
+              <rect x="1"  y="1"  width="10" height="10" fill="#f25022"/>
+              <rect x="12" y="1"  width="10" height="10" fill="#7fba00"/>
+              <rect x="1"  y="12" width="10" height="10" fill="#00a4ef"/>
+              <rect x="12" y="12" width="10" height="10" fill="#ffb900"/>
+            </svg>
+            Sign in with Microsoft
+          </button>
+        </div>
+
+        <div id="m365-connected" class="m365-state" hidden>
+          <div class="m365-account">
+            <span class="m365-dot"></span>
+            <span id="m365-username" class="m365-user"></span>
+            <button class="m365-signout" onclick="disconnectM365()" title="Sign out">Sign out</button>
+          </div>
+
+          <!-- Email sync -->
+          <div class="m365-sync-row">
+            <div class="m365-sync-label">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+              Exchange Email
+            </div>
+            <div class="m365-sync-controls">
+              <select id="email-folder" class="mini-select">
+                <option value="inbox">Inbox</option>
+                <option value="sentitems">Sent</option>
+                <option value="drafts">Drafts</option>
+              </select>
+              <select id="email-top" class="mini-select">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+              <button class="sync-btn" onclick="syncEmail()">Sync</button>
+            </div>
+          </div>
+
+          <!-- Calendar sync -->
+          <div class="m365-sync-row">
+            <div class="m365-sync-label">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Outlook Calendar
+            </div>
+            <div class="m365-sync-controls">
+              <select id="cal-back" class="mini-select">
+                <option value="14">14d</option>
+                <option value="30" selected>30d</option>
+                <option value="90">90d</option>
+              </select>
+              <select id="cal-forward" class="mini-select">
+                <option value="30">30d</option>
+                <option value="90" selected>90d</option>
+                <option value="180">180d</option>
+              </select>
+              <button class="sync-btn" onclick="syncCalendar()">Sync</button>
+            </div>
+          </div>
+
+          <!-- SharePoint sync -->
+          <div class="m365-sync-row m365-sp-row">
+            <div class="m365-sync-label">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              SharePoint
+            </div>
+            <div class="m365-sp-inputs">
+              <input
+                type="text"
+                id="sp-site-url"
+                class="sp-url-input"
+                placeholder="oracle.sharepoint.com:/sites/YourSite"
+              />
+              <div class="m365-sync-controls">
+                <button class="sync-btn" onclick="syncSharePoint()">Sync Site</button>
+                <button class="sync-btn secondary" onclick="syncMyDrives()" title="Sync files from /me/drives — no admin consent needed">My Drives</button>
+              </div>
+              <div class="sp-search-row">
+                <input type="text" id="sp-search-q" class="sp-url-input" placeholder="Search sites…" />
+                <button class="sync-btn secondary" onclick="searchSites()">Find</button>
+              </div>
+              <ul id="sp-site-results" class="sp-site-list" hidden></ul>
+            </div>
+          </div>
+
+          <div id="m365-status" class="m365-status-msg"></div>
+        </div>
+      </section>
+
+      <!-- Email Archive -->
+      <section class="panel">
+        <h2>Email Archive</h2>
+        <div class="archive-row">
+          <span class="archive-label">ParamountRAG/outlook/email/emails.json</span>
+          <select id="archive-ws" class="mini-select" title="Workstream tag">
+            <option value="">No workstream</option>
+          </select>
+        </div>
+        <button class="ingest-btn" id="email-archive-btn" onclick="ingestEmailArchive()">Ingest emails.json</button>
+        <div id="email-archive-status" class="m365-status-msg"></div>
+      </section>
+
+      <!-- File Upload -->
+      <section class="panel" id="upload-panel">
+        <h2>Upload Documents</h2>
+        <div class="drop-zone" id="drop-zone">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <p>Drop files here · <label class="link" for="file-input">browse files</label> · <label class="link" for="folder-input">browse folder</label></p>
+          <p class="hint">PDF · DOCX · XLSX · PPTX · TXT · MD · CSV · SVG · VTT · ZIP</p>
+          <input type="file" id="file-input" multiple accept=".pdf,.txt,.md,.csv,.svg,.vtt,.docx,.doc,.xlsx,.xls,.pptx,.zip" hidden />
+          <input type="file" id="folder-input" webkitdirectory multiple hidden />
+        </div>
+
+        <div id="staged-area" hidden>
+          <ul id="staged-list" class="staged-list"></ul>
+          <details id="meta-details" class="meta-details">
+            <summary>Document metadata <span class="meta-count" id="meta-filled"></span></summary>
+            <div class="meta-form" id="meta-form">
+              <div class="meta-row"><label>Doc Type</label><select name="doc_type" id="m-doc_type"><option value="">—</option></select></div>
+              <div class="meta-row"><label>Workstream</label><select name="workstream" id="m-workstream"><option value="">—</option></select></div>
+              <div class="meta-row"><label>Priority</label><select name="priority" id="m-priority"><option value="">—</option></select></div>
+              <div class="meta-row"><label>Sentiment</label><select name="sentiment" id="m-sentiment"><option value="">—</option></select></div>
+              <div class="meta-row"><label>Author</label><input type="text" name="author" id="m-author" placeholder="Name" /></div>
+              <div class="meta-row"><label>Date</label><input type="date" name="date" id="m-date" /></div>
+              <div class="meta-row"><label>Meeting Date</label><input type="date" name="meeting_date" id="m-meeting_date" /></div>
+              <div class="meta-row"><label>Due Date</label><input type="date" name="due_date" id="m-due_date" /></div>
+              <div class="meta-row"><label>Topic</label><input type="text" name="topic" id="m-topic" placeholder="Brief topic" /></div>
+              <div class="meta-row"><label>Milestone</label><input type="text" name="milestone" id="m-milestone" placeholder="Milestone name" /></div>
+              <div class="meta-row"><label>Decision</label><input type="text" name="decision" id="m-decision" placeholder="Key decision" /></div>
+              <div class="meta-row"><label>Recipients</label><input type="text" name="recipients" id="m-recipients" placeholder="Comma-separated" /></div>
+              <div class="meta-row"><label>Mentioned</label><input type="text" name="mentioned_people" id="m-mentioned_people" placeholder="Comma-separated" /></div>
+              <div class="meta-row"><label>Keywords</label><input type="text" name="keywords" id="m-keywords" placeholder="Comma-separated" /></div>
+              <div class="meta-row"><label>Action Items</label><input type="text" name="action_items" id="m-action_items" placeholder="Comma-separated" /></div>
+              <div class="meta-row"><label>Doc ID</label><input type="text" name="doc_id" id="m-doc_id" placeholder="Optional" /></div>
+              <div class="meta-row"><label>Thread ID</label><input type="text" name="thread_id" id="m-thread_id" placeholder="Optional" /></div>
+              <div class="meta-row"><label>Parent Doc</label><input type="text" name="parent_doc_id" id="m-parent_doc_id" placeholder="Optional" /></div>
+              <div class="meta-row meta-flags">
+                <label class="flag-label"><input type="checkbox" name="risk_flag" id="m-risk_flag" /> Risk Flag</label>
+                <label class="flag-label"><input type="checkbox" name="is_resolved" id="m-is_resolved" /> Resolved</label>
+              </div>
+            </div>
+          </details>
+          <button class="ingest-btn" id="ingest-btn">Ingest documents</button>
+        </div>
+        <div id="upload-status"></div>
+      </section>
+
+      <!-- Knowledge Base -->
+      <section class="panel sources-panel">
+        <h2>Knowledge Base</h2>
+        <ul class="source-list" id="source-list">
+          <li class="empty">No documents indexed yet.</li>
+        </ul>
+      </section>
+    </aside>
+
+    <!-- ── Main chat area ───────────────────────── -->
+    <main class="chat-area">
+      <div class="chat-toolbar">
+        <button class="export-btn" id="export-md-btn" onclick="exportChat('md')" title="Download as Markdown">⬇ Export .md</button>
+        <button class="export-btn" id="export-txt-btn" onclick="exportChat('txt')" title="Download as plain text">⬇ Export .txt</button>
+        <button class="export-btn danger" id="clear-chat-btn" onclick="clearChat()" title="Clear conversation">✕ Clear</button>
+      </div>
+      <div class="messages" id="messages">
+        <div class="welcome">
+          <h2>Ask anything about your documents</h2>
+          <p>Upload files or sync from M365, then ask questions here.</p>
+        </div>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar" id="filter-bar">
+        <button class="filter-toggle" id="filter-toggle">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          Filters
+          <span class="active-filter-count" id="active-filter-count" hidden>0</span>
+        </button>
+        <div class="filter-row" id="filter-row" hidden>
+          <select id="f-workstream" class="filter-select"><option value="">All workstreams</option></select>
+          <select id="f-doc_type" class="filter-select"><option value="">All doc types</option></select>
+          <select id="f-priority" class="filter-select"><option value="">All priorities</option></select>
+          <select id="f-sentiment" class="filter-select"><option value="">All sentiments</option></select>
+          <select id="f-source" class="filter-select"><option value="">All sources</option></select>
+          <label class="filter-check"><input type="checkbox" id="f-risk_flag" /> Risk only</label>
+          <label class="filter-check"><input type="checkbox" id="f-is_resolved" /> Resolved</label>
+          <button class="clear-filters" id="clear-filters">Clear</button>
+        </div>
+      </div>
+
+      <form class="input-bar" id="query-form">
+        <textarea id="question-input" placeholder="Ask a question about your documents…" rows="1" autocomplete="off"></textarea>
+        <button type="submit" id="send-btn" title="Send">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </form>
+    </main>
+
+  </div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

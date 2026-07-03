@@ -1,0 +1,22 @@
+# ChromaDB — too large for git (9GB), backed up via robocopy to OneDrive nightly
+chroma_db/
+
+# SQLite WAL files — transient, not needed in history
+*.db-shm
+*.db-wal
+
+# Uploads — transient ingest staging area
+uploads/
+
+# Logs
+ingest_log.txt
+ingest_tracker.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Claude Code internal
+.claude/

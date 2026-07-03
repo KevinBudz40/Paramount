@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Paramount 10/1 — Project Intelligence Dashboard</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+
+<div id="offline-banner">⚠️ DATABASE OFFLINE — live panels disabled</div>
+
+<div id="pinned-reminders">
+  <span class="pinned-label">📌 REMINDERS:</span>
+  <span class="pinned-item">Get access to <a href="https://hypercare-dashboard-test.paramount.com/" target="_blank">hypercare-dashboard-test.paramount.com</a></span>
+</div>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="title">PARAMOUNT 10/1</div>
+  </div>
+  <div class="topbar-center">
+    <div class="days-num" id="days-num">--</div>
+    <div class="days-label">DAYS TO GO-LIVE</div>
+  </div>
+  <div class="topbar-right">
+    <span>CHUNKS: <span class="stat-val" id="chunk-count">--</span></span>
+    <span>LAST SYNC: <span class="stat-val" id="last-sync">--</span></span>
+    <button class="refresh-btn" id="refresh-all-btn">⟳ Refresh All</button>
+  </div>
+</header>
+
+<main class="grid">
+
+  <section class="panel" id="panel-deadlines">
+    <h2>DEADLINES &amp; OVERDUE</h2>
+    <ul class="panel-list" id="deadlines-fixed"></ul>
+    <ul class="panel-list" id="deadlines-dynamic"><li class="empty-state">Querying...</li></ul>
+    <div class="cached-note" id="deadlines-cached"></div>
+  </section>
+
+  <section class="panel" id="panel-open-items">
+    <h2>OPEN ITEMS &amp; RISKS <button class="refresh-btn" id="refresh-open-items">⟳</button></h2>
+    <ul class="panel-list" id="open-items-list"><li class="empty-state">Querying...</li></ul>
+    <div class="cached-note" id="open-items-cached"></div>
+  </section>
+
+  <section class="panel full" id="panel-workstreams">
+    <h2>WORKSTREAM STATUS</h2>
+    <table class="ws-table">
+      <thead>
+        <tr><th>Workstream</th><th>Status</th><th>Last Activity</th><th>Key Open Item</th><th>Owner</th></tr>
+      </thead>
+      <tbody id="ws-tbody"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="panel-recent">
+    <h2>RECENT ACTIVITY <span style="font-weight:400;color:var(--text-dim);font-size:10px;">(48H)</span></h2>
+    <ul class="panel-list" id="recent-list"><li class="empty-state">Loading...</li></ul>
+  </section>
+
+  <section class="panel" id="panel-pulse">
+    <h2>STAKEHOLDER PULSE</h2>
+    <div class="pulse-grid" id="pulse-list"><div class="empty-state">Loading...</div></div>
+  </section>
+
+
+  <section class="panel full" id="panel-doc-requests">
+    <h2>OPEN DOC REQUESTS <span style="font-weight:400;color:var(--text-dim);font-size:10px;">(FDD / TDD blocking sessions)</span>
+      <span style="float:right;display:flex;gap:8px;align-items:center;">
+        <select id="phase-filter" style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:3px 6px;border-radius:3px;">
+          <option value="">All Phases</option>
+        </select>
+        <button class="refresh-btn" id="refresh-doc-req">⟳</button>
+      </span>
+    </h2>
+    <table class="ws-table">
+      <thead>
+        <tr>
+          <th>Type</th><th>Object</th><th>RAID</th><th>Requested From</th>
+          <th>Requested By</th><th>Date Requested</th><th>Session Target</th>
+          <th>Status</th><th>Age (bd)</th>
+        </tr>
+      </thead>
+      <tbody id="doc-req-tbody"><tr><td colspan="9" class="empty-state">Loading...</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="panel full" id="panel-deliverables">
+    <h2>TEAM DELIVERABLES <span style="font-weight:400;color:var(--text-dim);font-size:10px;">(O2C / AR)</span> <button class="refresh-btn" id="refresh-deliverables" style="float:right">⟳</button></h2>
+    <div id="deliverables-body"><div class="empty-state">Loading...</div></div>
+  </section>
+
+</main>
+
+<div class="modal-overlay" id="edit-modal-overlay">
+  <div class="modal-box">
+    <span class="modal-close" id="edit-modal-close">✕</span>
+    <h3 id="edit-modal-title">Edit</h3>
+    <div id="edit-modal-form"></div>
+    <div class="edit-actions">
+      <button class="btn-save" id="edit-modal-save">Save</button>
+      <button class="btn-cancel" id="edit-modal-cancel">Cancel</button>
+    </div>
+    <div id="edit-modal-msg" style="margin-top:8px;font-size:11px;"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal-box">
+    <span class="modal-close" id="modal-close">✕</span>
+    <h3 id="modal-title">Detail</h3>
+    <div class="modal-body" id="modal-body">Querying...</div>
+  </div>
+</div>
+
+<script>
+const GO_LIVE = new Date("2026-10-01T00:00:00");
+const WORKSTREAMS = [
+  { name: "O2C / AR Billing",            owner: "Karen Marx" },
+  { name: "AGIS / Intercompany",         owner: "Kevin B" },
+  { name: "Studio Billing Hub",          owner: "Lawson James / conflict" },
+  { name: "Brazil / Boleto",             owner: "new — unscoped" },
+  { name: "Projects / Costing",          owner: "" },
+  { name: "Procurement",                 owner: "" },
+];
+const MILESTONES = [
+  { date: "2026-07-02", label: "Open items due (close as many as possible)" },
+  { date: "2026-07-06", label: "Configuration activities begin" },
+  { date: "2026-07-14", label: "Buffer — flag if open items remain" },
+  { date: "2026-10-01", label: "GO-LIVE" },
+];
+
+const CACHE_PREFIX = "pdash_";
+
+function cacheGet(key) {
+  try { return JSON.parse(localStorage.getItem(CACHE_PREFIX + key) || "null"); }
+  catch (e) { return null; }
+}
+function cacheSet(key, data) {
+  try { localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ data, ts: Date.now() })); }
+  catch (e) {}
+}
+
+function setOffline(isOffline) {
+  document.getElementById("offline-banner").classList.toggle("show", isOffline);
+}
+
+// ---- SSE RAG query helper ----
+async function queryRag(question, nResults) {
+  nResults = nResults || 8;
+  const resp = await fetch("/api/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, n_results: nResults }),
+  });
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let answer = "";
+  let sources = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5);
+      if (payload === "[DONE]") continue;
+      if (payload.startsWith("sources:")) {
+        try { sources = JSON.parse(payload.slice(8)); } catch (e) {}
+      } else if (payload.startsWith("t:")) {
+        try { answer += JSON.parse(payload.slice(2)); } catch (e) {}
+      } else if (payload.startsWith("error:")) {
+        throw new Error(JSON.parse(payload.slice(6)));
+      }
+    }
+  }
+  return { answer, sources };
+}
+
+function daysUntil(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const now = new Date();
+  return Math.ceil((d - now) / 86400000);
+}
+
+function proximityDot(days) {
+  if (days < 0) return "dot-red";
+  if (days <= 7) return "dot-amber";
+  if (days <= 30) return "dot-green";
+  return "dot-gray";
+}
+
+// ---- Header ----
+function renderHeader() {
+  const days = Math.ceil((GO_LIVE - new Date()) / 86400000);
+  const el = document.getElementById("days-num");
+  el.textContent = days;
+  el.classList.remove("days-green", "days-amber", "days-red");
+  el.classList.add(days > 60 ? "days-green" : days >= 30 ? "days-amber" : "days-red");
+}
+
+async function loadHeaderStats() {
+  try {
+    const resp = await fetch("/api/sources");
+    if (!resp.ok) throw new Error("offline");
+    const data = await resp.json();
+    document.getElementById("chunk-count").textContent = data.total_chunks.toLocaleString();
+    setOffline(false);
+  } catch (e) {
+    setOffline(true);
+  }
+  document.getElementById("last-sync").textContent = new Date().toLocaleString();
+}
+
+// ---- Panel 1: Deadlines ----
+function renderFixedDeadlines() {
+  const ul = document.getElementById("deadlines-fixed");
+  ul.innerHTML = "";
+  for (const m of MILESTONES) {
+    const days = daysUntil(m.date);
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="dot ${proximityDot(days)}"></span><strong>${m.date}</strong> — ${m.label}`;
+    ul.appendChild(li);
+  }
+}
+
+async function loadDynamicDeadlines() {
+  const ul = document.getElementById("deadlines-dynamic");
+  try {
+    const { answer } = await queryRag(
+      "What deadlines, due dates, or action required items appear in recent emails and documents? List them with dates and owners."
+    );
+    cacheSet("deadlines", answer);
+    renderDeadlineAnswer(answer);
+    document.getElementById("deadlines-cached").textContent = "";
+  } catch (e) {
+    const cached = cacheGet("deadlines");
+    if (cached) {
+      renderDeadlineAnswer(cached.data);
+      document.getElementById("deadlines-cached").textContent =
+        "⚠️ Using cached result from " + new Date(cached.ts).toLocaleString();
+    } else {
+      ul.innerHTML = `<li class="empty-state">No data found</li>`;
+    }
+  }
+}
+
+function renderDeadlineAnswer(text) {
+  const ul = document.getElementById("deadlines-dynamic");
+  ul.innerHTML = "";
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 2);
+  if (!lines.length) {
+    ul.innerHTML = `<li class="empty-state">No data found</li>`;
+    return;
+  }
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="dot dot-gray"></span>${escapeHtml(line)}`;
+    ul.appendChild(li);
+  }
+}
+
+// ---- Panel 2: Open Items & Risks ----
+async function loadOpenItems() {
+  const ul = document.getElementById("open-items-list");
+  ul.innerHTML = `<li class="empty-state">Querying...</li>`;
+  try {
+    const { answer } = await queryRag(
+      "What are all current open issues, blockers, and unresolved items across all workstreams? Include owner and workstream for each."
+    );
+    cacheSet("open_items", answer);
+    renderOpenItems(answer);
+    document.getElementById("open-items-cached").textContent = "";
+  } catch (e) {
+    const cached = cacheGet("open_items");
+    if (cached) {
+      renderOpenItems(cached.data);
+      document.getElementById("open-items-cached").textContent =
+        "⚠️ Using cached result from " + new Date(cached.ts).toLocaleString();
+    } else {
+      ul.innerHTML = `<li class="empty-state">No data found</li>`;
+    }
+  }
+}
+
+function renderOpenItems(text) {
+  const ul = document.getElementById("open-items-list");
+  ul.innerHTML = "";
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 2);
+  if (!lines.length) {
+    ul.innerHTML = `<li class="empty-state">No data found</li>`;
+    return;
+  }
+  for (const line of lines) {
+    const isRisk = /risk|blocker/i.test(line);
+    const tag = isRisk ? `<span class="tag-risk">🔴 RISK</span>` : `<span class="tag-open">⚠️ OPEN</span>`;
+    const li = document.createElement("li");
+    li.innerHTML = `${tag} ${escapeHtml(line)}`;
+    ul.appendChild(li);
+  }
+}
+
+// ---- Panel 3: Workstream Status ----
+function statusFromText(text) {
+  const t = text.toLowerCase();
+  if (/blocked|risk|critical|delay/.test(t)) return "red";
+  if (/pending|in progress|open item|tbd|unscoped/.test(t)) return "amber";
+  if (/complete|on track|resolved|done/.test(t)) return "green";
+  return "gray";
+}
+
+async function loadWorkstreams() {
+  const tbody = document.getElementById("ws-tbody");
+  tbody.innerHTML = "";
+  const rows = WORKSTREAMS.map(ws => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(ws.name)}</td>
+      <td><span class="spinner"></span></td>
+      <td>—</td>
+      <td>—</td>
+      <td>${escapeHtml(ws.owner)}</td>
+    `;
+    tbody.appendChild(tr);
+    return tr;
+  });
+
+  await Promise.all(WORKSTREAMS.map(async (ws, idx) => {
+    const tr = rows[idx];
+    const cacheKey = "ws_" + ws.name;
+    try {
+      const { answer } = await queryRag(`What is the current status of ${ws.name}? One sentence answer.`, 6);
+      cacheSet(cacheKey, answer);
+      renderWsRow(tr, ws, answer);
+    } catch (e) {
+      const cached = cacheGet(cacheKey);
+      if (cached) {
+        renderWsRow(tr, ws, cached.data, true, cached.ts);
+      } else {
+        tr.children[1].innerHTML = `<span class="status-pill status-gray">NO DATA</span>`;
+        tr.children[2].textContent = "—";
+        tr.children[3].textContent = "No data found";
+      }
+    }
+  }));
+}
+
+function renderWsRow(tr, ws, answer, isCached, cachedTs) {
+  const status = statusFromText(answer);
+  const pillClass = "status-" + status;
+  const label = { red: "AT RISK", amber: "IN PROGRESS", green: "ON TRACK", gray: "UNKNOWN" }[status];
+  tr.children[1].innerHTML = `<span class="status-pill ${pillClass}">${label}</span>`;
+  tr.children[2].textContent = isCached ? new Date(cachedTs).toLocaleDateString() : "today";
+  tr.children[3].textContent = answer.slice(0, 140) + (answer.length > 140 ? "…" : "");
+}
+
+// ---- Panel 4: Recent Activity ----
+async function loadRecent() {
+  const ul = document.getElementById("recent-list");
+  try {
+    const resp = await fetch("/api/recent?hours=48");
+    if (!resp.ok) throw new Error("offline");
+    const data = await resp.json();
+    cacheSet("recent", data.items);
+    renderRecent(data.items);
+  } catch (e) {
+    const cached = cacheGet("recent");
+    if (cached) {
+      renderRecent(cached.data);
+    } else {
+      ul.innerHTML = `<li class="empty-state">No data found</li>`;
+    }
+  }
+}
+
+function renderRecent(items) {
+  const ul = document.getElementById("recent-list");
+  ul.innerHTML = "";
+  if (!items || !items.length) {
+    ul.innerHTML = `<li class="empty-state">No recent activity</li>`;
+    return;
+  }
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "recent-item";
+    const label = item.topic || item.source || "(untitled)";
+    const dt = item.date || item.ingested_at || "";
+    li.innerHTML = `<strong>${escapeHtml(dt.slice(0,16).replace("T"," "))}</strong> [${escapeHtml(item.doc_type || "doc")}] ${escapeHtml(item.author || item.sender_email || "")} — ${escapeHtml(label)}`;
+    li.addEventListener("click", () => openItemModal(item));
+    ul.appendChild(li);
+  }
+}
+
+// ---- Panel 5: Stakeholder Pulse ----
+async function loadPulse() {
+  const wrap = document.getElementById("pulse-list");
+  try {
+    const resp = await fetch("/api/stakeholder_pulse");
+    if (!resp.ok) throw new Error("offline");
+    const data = await resp.json();
+    cacheSet("pulse", data.stakeholders);
+    renderPulse(data.stakeholders);
+  } catch (e) {
+    const cached = cacheGet("pulse");
+    if (cached) {
+      renderPulse(cached.data);
+    } else {
+      wrap.innerHTML = `<div class="empty-state">No data found</div>`;
+    }
+  }
+}
+
+function renderPulse(list) {
+  const wrap = document.getElementById("pulse-list");
+  wrap.innerHTML = "";
+  for (const s of list) {
+    const days = s.days_since;
+    let cls = "dot-gray";
+    if (days !== null) {
+      cls = days <= 3 ? "dot-green" : days <= 7 ? "dot-amber" : "dot-red";
+    }
+    const div = document.createElement("div");
+    div.className = "pulse-item";
+    div.innerHTML = `
+      <div>
+        <div class="pulse-name"><span class="dot ${cls}"></span>${escapeHtml(s.name)}</div>
+        <div class="pulse-meta">${escapeHtml(s.last_topic || "no contact on record")}</div>
+      </div>
+      <div class="pulse-days">${days === null ? "—" : days + "d"}</div>
+    `;
+    wrap.appendChild(div);
+  }
+}
+
+// ---- Modal ----
+function openItemModal(item) {
+  const overlay = document.getElementById("modal-overlay");
+  const title = document.getElementById("modal-title");
+  const body = document.getElementById("modal-body");
+  title.textContent = item.topic || item.source || "Detail";
+  body.textContent = "Querying...";
+  overlay.classList.add("show");
+
+  queryRag(`Tell me more about this item: "${item.topic || item.source}" from ${item.author || item.sender_email || "unknown"} dated ${item.date || ""}.`)
+    .then(({ answer }) => { body.textContent = answer || "No data found"; })
+    .catch(() => { body.textContent = "Query failed — RAG unavailable."; });
+}
+document.getElementById("modal-close").addEventListener("click", () => {
+  document.getElementById("modal-overlay").classList.remove("show");
+});
+document.getElementById("modal-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "modal-overlay") e.target.classList.remove("show");
+});
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+// ---- Edit modal state ----
+let _editState = null;
+const _docItems = {};
+const _delItems = {};
+
+function openDocReqEdit(item) {
+  _editState = { type: "doc", id: item.id, reload: loadDocRequests };
+  document.getElementById("edit-modal-title").textContent = item.object_name;
+  document.getElementById("edit-modal-msg").textContent = "";
+  document.getElementById("edit-modal-form").innerHTML =
+    '<div class="edit-field"><label>Doc Type</label>' +
+    '<select name="doc_type">' +
+    ['FDD','TDD','FSD'].map(t => '<option' + (item.doc_type===t?' selected':'') + '>' + t + '</option>').join('') +
+    '</select></div>' +
+    '<div class="edit-field"><label>Date Requested</label>' +
+    '<input type="date" name="date_requested" value="' + (item.date_requested||'') + '"></div>' +
+    '<div class="edit-field"><label>Date Received</label>' +
+    '<input type="date" name="date_received" value="' + (item.date_received||'') + '"></div>' +
+    '<div class="edit-field" style="flex-direction:row;align-items:center;gap:10px;">' +
+    '<label style="margin:0;">Reviewed</label>' +
+    '<input type="checkbox" name="reviewed"' + (item.reviewed?' checked':'') + '></div>' +
+    '<div class="edit-field"><label>Session Target Date</label>' +
+    '<input type="date" name="session_target_date" value="' + (item.session_target_date||'') + '"></div>' +
+    '<div class="edit-field"><label>Notes</label>' +
+    '<textarea name="notes" rows="3">' + escapeHtml(item.notes||'') + '</textarea></div>';
+  document.getElementById("edit-modal-overlay").classList.add("show");
+}
+
+function openDeliverableEdit(item) {
+  _editState = { type: "del", id: item.id, reload: loadDeliverables };
+  document.getElementById("edit-modal-title").textContent = item.deliverable_name;
+  document.getElementById("edit-modal-msg").textContent = "";
+  const statuses = ["Not Started","In Progress","Blocked","Client Review","Done"];
+  document.getElementById("edit-modal-form").innerHTML =
+    '<div class="edit-field"><label>Status</label>' +
+    '<select name="status">' +
+    statuses.map(s => '<option' + (item.status===s?' selected':'') + '>' + s + '</option>').join('') +
+    '</select></div>' +
+    '<div class="edit-field"><label>Owner</label>' +
+    '<input type="text" name="owner" value="' + escapeHtml(item.owner||'') + '"></div>' +
+    '<div class="edit-field"><label>Due Date</label>' +
+    '<input type="date" name="due_date" value="' + (item.due_date||'') + '"></div>' +
+    '<div class="edit-field"><label>Blocked By</label>' +
+    '<textarea name="blocked_by" rows="3">' + escapeHtml(item.blocked_by||'') + '</textarea></div>';
+  document.getElementById("edit-modal-overlay").classList.add("show");
+}
+
+function closeEditModal() {
+  document.getElementById("edit-modal-overlay").classList.remove("show");
+  _editState = null;
+}
+
+document.getElementById("edit-modal-close").addEventListener("click", closeEditModal);
+document.getElementById("edit-modal-cancel").addEventListener("click", closeEditModal);
+document.getElementById("edit-modal-overlay").addEventListener("click", e => {
+  if (e.target.id === "edit-modal-overlay") closeEditModal();
+});
+
+document.getElementById("edit-modal-save").addEventListener("click", async () => {
+  if (!_editState) return;
+  const form = document.getElementById("edit-modal-form");
+  const data = {};
+  for (const el of form.querySelectorAll("input,select,textarea")) {
+    if (!el.name) continue;
+    if (el.type === "checkbox") {
+      data[el.name] = el.checked ? 1 : 0;
+    } else {
+      data[el.name] = el.value || null;
+    }
+  }
+  const url = _editState.type === "doc"
+    ? "/api/doc_requests/" + _editState.id
+    : "/api/deliverables/" + _editState.id;
+  const msg = document.getElementById("edit-modal-msg");
+  try {
+    const resp = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    msg.style.color = "var(--green)";
+    msg.textContent = "Saved.";
+    _editState.reload();
+    setTimeout(closeEditModal, 700);
+  } catch (e) {
+    msg.style.color = "var(--red)";
+    msg.textContent = "Save failed: " + e.message;
+  }
+});
+
+// ---- Phase filter ----
+let _phasesLoaded = false;
+async function loadPhaseFilter() {
+  if (!_phasesLoaded) {
+    try {
+      const resp = await fetch("/api/phases");
+      if (resp.ok) {
+        const data = await resp.json();
+        const sel = document.getElementById("phase-filter");
+        for (const p of data.phases) {
+          const opt = document.createElement("option");
+          opt.value = p;
+          opt.textContent = p.replace(/\s*\(.*\)/, "").trim();
+          opt.title = p;
+          if (p.includes("4a")) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        _phasesLoaded = true;
+      }
+    } catch (e) {}
+  }
+  loadDocRequests();
+  loadDeliverables();
+}
+
+function selectedPhase() {
+  return document.getElementById("phase-filter").value;
+}
+
+document.getElementById("phase-filter").addEventListener("change", () => {
+  loadDocRequests();
+  loadDeliverables();
+});
+
+// ---- Panel 6: Open Doc Requests ----
+async function loadDocRequests() {
+  const tbody = document.getElementById("doc-req-tbody");
+  tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Loading...</td></tr>';
+  const phase = selectedPhase();
+  const qs = phase ? "?phase=" + encodeURIComponent(phase) : "";
+  try {
+    const resp = await fetch("/api/doc_requests" + qs);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    renderDocRequests(data.items);
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Error loading doc requests</td></tr>';
+  }
+}
+
+function renderDocRequests(items) {
+  const tbody = document.getElementById("doc-req-tbody");
+  tbody.innerHTML = "";
+  if (!items || !items.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No doc requests — run sync_from_asana.py to seed</td></tr>';
+    return;
+  }
+  for (const item of items) {
+    _docItems[item.id] = item;
+    const tr = document.createElement("tr");
+    tr.className = "clickable-row";
+    let pillClass = "status-amber";
+    let statusLabel = item.status;
+    if (item.status === "Open") {
+      if (item.staleness === "red") { tr.classList.add("row-stale-red"); pillClass = "status-red"; }
+      else if (item.staleness === "amber") { tr.classList.add("row-stale-amber"); }
+      statusLabel = item.staleness_days > 0 ? "Open · " + item.staleness_days + "bd" : "Open";
+    } else if (item.status === "Ready") { pillClass = "status-green"; }
+    else if (item.status === "Received") { pillClass = "status-amber"; }
+    tr.innerHTML =
+      '<td><span class="status-pill ' + pillClass + '">' + escapeHtml(item.doc_type) + '</span></td>' +
+      '<td>' + escapeHtml(item.object_name) + '</td>' +
+      '<td class="raid-col">' + escapeHtml(item.raid_id||"") + '</td>' +
+      '<td>' + escapeHtml(item.requested_from||"") + '</td>' +
+      '<td>' + escapeHtml(item.requested_by||"") + '</td>' +
+      '<td class="date-col">' + escapeHtml(item.date_requested||"") + '</td>' +
+      '<td class="date-col">' + escapeHtml(item.session_target_date||"") + '</td>' +
+      '<td><span class="status-pill ' + pillClass + '">' + escapeHtml(statusLabel) + '</span></td>' +
+      '<td class="age-col">' + (item.status==="Open" && item.staleness_days>0 ? item.staleness_days : "—") + '</td>';
+    tr.addEventListener("click", () => openDocReqEdit(_docItems[item.id]));
+    tbody.appendChild(tr);
+  }
+}
+
+// ---- Panel 7: Team Deliverables ----
+async function loadDeliverables() {
+  const container = document.getElementById("deliverables-body");
+  container.innerHTML = '<div class="empty-state">Loading...</div>';
+  const phase = selectedPhase();
+  const qs = phase ? "?phase=" + encodeURIComponent(phase) : "";
+  try {
+    const resp = await fetch("/api/deliverables" + qs);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    renderDeliverables(data.items);
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state">Error loading deliverables</div>';
+  }
+}
+
+function renderDeliverables(items) {
+  const container = document.getElementById("deliverables-body");
+  container.innerHTML = "";
+  if (!items || !items.length) {
+    container.innerHTML = '<div class="empty-state">No deliverables — run sync_from_asana.py to seed</div>';
+    return;
+  }
+  const PILL = { "Not Started":"status-gray","In Progress":"status-amber","Client Review":"status-amber","Blocked":"status-red","Done":"status-green" };
+  const groups = new Map();
+  for (const item of items) {
+    const ws = item.workstream || "Other";
+    if (!groups.has(ws)) groups.set(ws, []);
+    groups.get(ws).push(item);
+  }
+  for (const [ws, wsItems] of groups) {
+    const section = document.createElement("div");
+    section.className = "del-group";
+    const hdr = document.createElement("div");
+    hdr.className = "del-group-header";
+    hdr.textContent = ws;
+    section.appendChild(hdr);
+    const table = document.createElement("table");
+    table.className = "ws-table";
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th>Deliverable</th><th>Owner</th><th>RAID</th><th>Due</th><th>Status</th><th>Blocked By</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const item of wsItems) {
+      _delItems[item.id] = item;
+      const tr = document.createElement("tr");
+      tr.className = "clickable-row" + (item.status === "Blocked" ? " row-blocked" : "");
+      const pillClass = PILL[item.status] || "status-gray";
+      const nameTd   = document.createElement("td"); nameTd.textContent = item.deliverable_name;
+      const ownerTd  = document.createElement("td"); ownerTd.textContent = item.owner || "";
+      const raidTd   = document.createElement("td"); raidTd.className = "raid-col"; raidTd.textContent = item.raid_id || "";
+      const dueTd    = document.createElement("td"); dueTd.className = "date-col"; dueTd.textContent = item.due_date || "";
+      const statusTd = document.createElement("td");
+      statusTd.innerHTML = '<span class="status-pill ' + pillClass + '">' + escapeHtml(item.status) + '</span>';
+      const blockedTd = document.createElement("td");
+      if (item.status === "Blocked") blockedTd.className = "blocked-by-text";
+      blockedTd.textContent = item.blocked_by || "";
+      tr.append(nameTd, ownerTd, raidTd, dueTd, statusTd, blockedTd);
+      tr.addEventListener("click", () => openDeliverableEdit(_delItems[item.id]));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    section.appendChild(table);
+    container.appendChild(section);
+  }
+}
+
+// ---- Load everything ----
+function loadAll() {
+  renderHeader();
+  loadHeaderStats();
+  renderFixedDeadlines();
+  loadDynamicDeadlines();
+  loadOpenItems();
+  loadWorkstreams();
+  loadRecent();
+  loadPulse();
+  loadPhaseFilter();
+}
+
+document.getElementById("refresh-all-btn").addEventListener("click", loadAll);
+document.getElementById("refresh-open-items").addEventListener("click", loadOpenItems);
+document.getElementById("refresh-doc-req").addEventListener("click", loadDocRequests);
+document.getElementById("refresh-deliverables").addEventListener("click", loadDeliverables);
+
+loadAll();
+setInterval(loadAll, 30 * 60 * 1000);
+setInterval(renderHeader, 60 * 1000);
+</script>
+</body>
+</html>
