@@ -99,6 +99,90 @@ def query(
     return items
 
 
+def _fetch_neighbours(
+    source: str,
+    chunk_index: int,
+    persist_dir: str = "./chroma_db",
+) -> tuple[str, str]:
+    """
+    Return (prev_text, next_text) for the chunks immediately before and after
+    the given chunk_index within the same source. Empty string if not found.
+    Uses direct SQLite scan — no embedding call needed.
+    """
+    db_path = f"{persist_dir}/chroma.sqlite3"
+    con = sqlite3.connect(db_path)
+    try:
+        # Get embedding ids for source + adjacent chunk indices
+        prev_text = next_text = ""
+        for target_idx, slot in ((chunk_index - 1, "prev"), (chunk_index + 1, "next")):
+            if target_idx < 0:
+                continue
+            # Find embedding id where source=source AND chunk_index=target_idx
+            rows = con.execute(
+                """
+                SELECT e1.id FROM embedding_metadata e1
+                JOIN embedding_metadata e2 ON e1.id = e2.id
+                WHERE e1.key = 'source' AND e1.string_value = ?
+                  AND e2.key = 'chunk_index' AND e2.int_value = ?
+                LIMIT 1
+                """,
+                (source, target_idx),
+            ).fetchall()
+            if not rows:
+                continue
+            emb_id = rows[0][0]
+            # Fetch the document text from the fulltext search content table
+            doc_rows = con.execute(
+                "SELECT c0 FROM embedding_fulltext_search_content WHERE id = ?", (emb_id,)
+            ).fetchall()
+            if doc_rows and doc_rows[0][0]:
+                if slot == "prev":
+                    prev_text = doc_rows[0][0]
+                else:
+                    next_text = doc_rows[0][0]
+        return prev_text, next_text
+    except Exception:
+        return "", ""
+    finally:
+        con.close()
+
+
+def expand_context(items: list[dict], persist_dir: str = "./chroma_db") -> list[dict]:
+    """
+    For each retrieved chunk, fetch the chunk before and after it from the same
+    source and prepend/append them as context. The core chunk text is preserved
+    unchanged; neighbours are wrapped in markers so Claude knows they are context,
+    not the matched passage.
+    """
+    expanded = []
+    for item in items:
+        source = item.get("source", "")
+        chunk_index = item.get("chunk_index", 0)
+        if not source:
+            expanded.append(item)
+            continue
+        try:
+            chunk_idx = int(chunk_index)
+        except (TypeError, ValueError):
+            expanded.append(item)
+            continue
+
+        prev_text, next_text = _fetch_neighbours(source, chunk_idx, persist_dir)
+
+        parts = []
+        if prev_text:
+            parts.append(f"[preceding context]\n{prev_text}\n[/preceding context]")
+        parts.append(item["text"])
+        if next_text:
+            parts.append(f"[following context]\n{next_text}\n[/following context]")
+
+        enriched = dict(item)
+        enriched["text"] = "\n\n".join(parts)
+        expanded.append(enriched)
+
+    return expanded
+
+
 def _generate_hypothetical(question: str) -> str:
     """
     HyDE: ask Claude to write a short hypothetical document that would answer
@@ -198,6 +282,7 @@ def _diverse_rerank(items: list[dict], n: int) -> list[dict]:
     emails: list[dict] = []
     docs: list[dict] = []
     seen_threads: set[str] = set()
+    seen_doc_sources: set[str] = set()
 
     for item in items:
         src = item.get("source", "")
@@ -208,6 +293,11 @@ def _diverse_rerank(items: list[dict], n: int) -> list[dict]:
             seen_threads.add(tid)
             emails.append(item)
         else:
+            # Deduplicate attachments by source — same file, different chunks:
+            # keep only the highest-scoring chunk per unique source path.
+            if src in seen_doc_sources:
+                continue
+            seen_doc_sources.add(src)
             docs.append(item)
 
     # Fill slots: docs first up to (n - email_cap), then emails up to email_cap

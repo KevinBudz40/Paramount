@@ -17,7 +17,7 @@ from rag.generator import generate_answer
 from rag.schema import DOC_TYPES, PRIORITIES, SENTIMENTS, WORKSTREAMS
 from rag.store import (
     add_chunks, delete_source, doc_count, list_sources,
-    query, hyde_query, recent_items, stakeholder_pulse,
+    query, hyde_query, expand_context, recent_items, stakeholder_pulse,
 )
 
 _HERE = Path(__file__).resolve().parent
@@ -336,6 +336,9 @@ def query_rag():
     except Exception:
         # Fallback to standard query if HyDE generation fails
         chunks = query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR)
+
+    # Expand each chunk with its neighbouring chunks for fuller context
+    chunks = expand_context(chunks, persist_dir=CHROMA_DIR)
 
     sources_used = [
         {
