@@ -99,6 +99,89 @@ def query(
     return items
 
 
+def _generate_hypothetical(question: str) -> str:
+    """
+    HyDE: ask Claude to write a short hypothetical document that would answer
+    the question. Embedding this hypothetical matches document language better
+    than embedding the question itself.
+    """
+    import anthropic
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        system=(
+            "You are a project document generator for the Paramount Pictures "
+            "Oracle Fusion ERP implementation. When given a question, write a "
+            "short (3-5 sentence) passage that a real project document, email, "
+            "or meeting note might contain that would directly answer it. "
+            "Use the specific terminology, names, and language that would appear "
+            "in Oracle ERP project documents. Do not answer the question directly — "
+            "write the passage AS IF it were extracted from a project artifact."
+        ),
+        messages=[{"role": "user", "content": question}],
+    )
+    return resp.content[0].text.strip()
+
+
+def hyde_query(
+    question: str,
+    n_results: int = 10,
+    filters: dict | None = None,
+    persist_dir: str = "./chroma_db",
+) -> list[dict]:
+    """
+    HyDE + multi-query retrieval:
+    1. Generate a hypothetical document passage that would answer the question
+    2. Retrieve chunks using the hypothetical (catches document-language matches)
+    3. Retrieve chunks using the original question (catches keyword matches)
+    4. Merge, deduplicate by source, and rerank — best of both searches
+    """
+    collection = _get_collection(persist_dir)
+    if collection.count() == 0:
+        return []
+
+    where = build_where_clause(filters or {})
+    candidate_n = min(n_results * 5, collection.count())
+
+    # Generate hypothetical passage
+    try:
+        hypothetical = _generate_hypothetical(question)
+    except Exception:
+        # Graceful fallback to standard query if HyDE generation fails
+        return query(question, n_results=n_results, filters=filters, persist_dir=persist_dir)
+
+    # Query with both the hypothetical and the original question
+    query_texts = [hypothetical, question]
+    kwargs: dict = dict(query_texts=query_texts, n_results=candidate_n)
+    if where:
+        kwargs["where"] = where
+
+    results = collection.query(**kwargs)
+
+    # Merge results from both queries — keep best score per unique source+chunk
+    seen: dict[str, dict] = {}  # key: "source:chunk_index"
+    for query_idx in range(len(query_texts)):
+        for doc, meta, dist in zip(
+            results["documents"][query_idx],
+            results["metadatas"][query_idx],
+            results["distances"][query_idx],
+        ):
+            item = deserialize_metadata(meta)
+            item["text"] = doc
+            item["score"] = round(1 - dist, 3)
+            dedup_key = f"{item.get('source','')}:{meta.get('chunk_index', 0)}"
+            if dedup_key not in seen or item["score"] > seen[dedup_key]["score"]:
+                seen[dedup_key] = item
+
+    merged = list(seen.values())
+    merged.sort(key=lambda x: x["score"], reverse=True)
+
+    if not filters:
+        return _diverse_rerank(merged, n_results)
+    return merged[:n_results]
+
+
 def _diverse_rerank(items: list[dict], n: int) -> list[dict]:
     """
     Return up to n items ensuring no single source type crowds out others.
