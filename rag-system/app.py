@@ -623,6 +623,60 @@ def ingest_email_json():
     })
 
 
+@app.route("/api/ingest/attachments", methods=["POST"])
+def ingest_attachments():
+    """
+    Ingest all files in the email attachments folder into ChromaDB.
+    Runs in-process (safe — same ChromaDB connection as Flask).
+    Returns counts of ingested, skipped, and errors.
+    """
+    from ingest_folder import _collect_files, _ingest_file, _open_db, _is_done, _record
+
+    attachments_dir = Path(r"C:\ParamountRAG\outlook\attachments\email")
+    tracker_db = str(_HERE / "ingest_tracker.db")
+
+    if not attachments_dir.exists():
+        return jsonify({"error": f"Attachments folder not found: {attachments_dir}"}), 404
+
+    all_files = _collect_files(attachments_dir)
+    con = _open_db(tracker_db)
+
+    ingested = skipped = errors = 0
+    error_list = []
+
+    for fpath in all_files:
+        try:
+            source_label = fpath.relative_to(attachments_dir).as_posix()
+        except ValueError:
+            source_label = fpath.name
+
+        if _is_done(con, source_label):
+            skipped += 1
+            continue
+
+        try:
+            n = _ingest_file(fpath, source_label, CHROMA_DIR)
+            if n == 0:
+                _record(con, source_label, "empty")
+                skipped += 1
+            else:
+                _record(con, source_label, "ok", chunks=n)
+                ingested += 1
+        except Exception as exc:
+            _record(con, source_label, "error", error=str(exc))
+            error_list.append({"file": source_label, "error": str(exc)})
+            errors += 1
+
+    con.close()
+    return jsonify({
+        "ingested": ingested,
+        "skipped": skipped,
+        "errors": errors,
+        "error_detail": error_list,
+        "total_chunks": doc_count(CHROMA_DIR),
+    })
+
+
 # ── Dashboard tracking panels ─────────────────────────────────────────────
 
 from dashboard_db import (
