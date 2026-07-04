@@ -4,6 +4,33 @@ All significant changes recorded here. Format: date, what changed, files touched
 
 ---
 
+## 2026-07-04 — Auto-ingest + Duplicate Chunk Cleanup
+
+**Recovery point:** `git tag recovery/2026-07-04-auto-ingest-dedup`
+
+### Item 1 — Auto-ingest attachments after email sync
+
+**Problem:** After `sync_outlook.py`, email bodies and attachments required separate manual ingest steps. Attachments also accumulated `_1`, `_2` duplicate files on each incremental sync.
+
+**Fix:**
+- `sync_outlook.py` — new `--ingest` flag: after mail export, POSTs to Flask `/api/ingest/email-json` then `/api/ingest/attachments`
+- `sync_outlook.py` — `save_attachment()` now skips if file already exists (was: rename with `_1` suffix)
+- `rag-system/app.py` — new `/api/ingest/attachments` endpoint runs folder ingest in-process (subprocess caused ChromaDB access violation 0xC0000005)
+
+**New usage:** `python scripts\sync_outlook.py --mail --ingest`
+**Note:** Flask must be running for `--ingest`. If Flask is down, sync completes with a warning — no data loss.
+
+### Item 2 — Duplicate chunk cleanup
+
+**Problem:** 219 duplicate attachment sources (5,074 chunks) in ChromaDB from `_1`/`_2` file copies ingested as distinct sources.
+
+**Actions:**
+- Deleted 255 duplicate files from `C:\ParamountRAG\outlook\attachments\email\`
+- Removed 219 duplicate sources from ChromaDB via DELETE API
+- ChromaDB: 63,922 chunks (was ~69,000)
+
+---
+
 ## 2026-07-03 — Phase 5 Dashboard Extension (Doc Requests + Deliverables)
 
 **Recovery point:** `git tag recovery/2026-07-03-dashboard-panels`
