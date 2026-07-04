@@ -4,6 +4,32 @@ All significant changes recorded here. Format: date, what changed, files touched
 
 ---
 
+## 2026-07-04 — HyDE Query (Hypothetical Document Embeddings)
+
+**Recovery point:** `git tag recovery/2026-07-04-hyde-query`
+
+### What changed
+- `rag-system/rag/store.py` — added `_generate_hypothetical()` and `hyde_query()`
+- `rag-system/app.py` — `/api/query` now uses `hyde_query()` instead of `query()`
+
+### How it works
+Before searching ChromaDB, Claude Haiku generates a short hypothetical project
+document passage that *would* answer the question. That passage is embedded and
+used as the primary search vector — it matches real document language (Oracle
+terminology, names, integration numbers) far better than embedding a short
+question. The original question is also searched in parallel; both result sets
+are merged and deduplicated, keeping the best score per chunk.
+
+Graceful fallback: if Haiku generation fails for any reason, falls back to
+standard query — no user-visible impact.
+
+### Impact
+Vague queries ("what's happening with e-invoicing", "who is responsible for
+Mexico cutover") now surface relevant content that shares no keywords with
+the question.
+
+---
+
 ## 2026-07-04 — Auto-ingest + Duplicate Chunk Cleanup
 
 **Recovery point:** `git tag recovery/2026-07-04-auto-ingest-dedup`
