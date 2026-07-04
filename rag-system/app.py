@@ -324,7 +324,17 @@ def query_rag():
 
     n = int(data.get("n_results", 5))
     filters = data.get("filters") or {}
-    chunks = hyde_query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR)
+
+    # HyDE: generate hypothetical passage in the main request thread (before SSE opens)
+    # then merge with a standard query for best-of-both retrieval.
+    from rag.store import _generate_hypothetical
+    try:
+        hypothetical = _generate_hypothetical(question)
+        chunks = hyde_query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR,
+                            hypothetical=hypothetical)
+    except Exception:
+        # Fallback to standard query if HyDE generation fails
+        chunks = query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR)
 
     sources_used = [
         {
@@ -744,4 +754,9 @@ if __name__ == "__main__":
     if not _AZURE_CONFIGURED:
         print("  [M365] Azure credentials not set — Graph features disabled.")
         print("  Set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID in .env\n")
-    app.run(debug=True, port=port, threaded=True)
+    # Pre-load ChromaDB + embedding model in the main thread before Flask starts
+    # serving. Prevents ONNX/HNSW crash when first load happens inside a request thread.
+    print("  Pre-loading ChromaDB...")
+    _preload_count = doc_count(CHROMA_DIR)
+    print(f"  Ready — {_preload_count:,} chunks indexed.\n")
+    app.run(debug=True, port=port, threaded=True, use_reloader=False)

@@ -106,6 +106,9 @@ def _generate_hypothetical(question: str) -> str:
     than embedding the question itself.
     """
     import anthropic
+    from pathlib import Path
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     client = anthropic.Anthropic()
     resp = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -129,10 +132,11 @@ def hyde_query(
     n_results: int = 10,
     filters: dict | None = None,
     persist_dir: str = "./chroma_db",
+    hypothetical: str = "",
 ) -> list[dict]:
     """
     HyDE + multi-query retrieval:
-    1. Generate a hypothetical document passage that would answer the question
+    1. Use pre-generated hypothetical passage (generated in main request thread)
     2. Retrieve chunks using the hypothetical (catches document-language matches)
     3. Retrieve chunks using the original question (catches keyword matches)
     4. Merge, deduplicate by source, and rerank — best of both searches
@@ -144,14 +148,10 @@ def hyde_query(
     where = build_where_clause(filters or {})
     candidate_n = min(n_results * 5, collection.count())
 
-    # Generate hypothetical passage
-    try:
-        hypothetical = _generate_hypothetical(question)
-    except Exception:
-        # Graceful fallback to standard query if HyDE generation fails
+    if not hypothetical:
         return query(question, n_results=n_results, filters=filters, persist_dir=persist_dir)
 
-    # Query with both the hypothetical and the original question
+    # Query with both the pre-generated hypothetical and the original question
     query_texts = [hypothetical, question]
     kwargs: dict = dict(query_texts=query_texts, n_results=candidate_n)
     if where:
