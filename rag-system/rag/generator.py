@@ -97,7 +97,7 @@ def _build_context(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def generate_answer(question: str, chunks: list[dict]) -> str:
+def generate_answer(question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
     """Generate a streaming answer and yield text deltas."""
     client = _get_client()
 
@@ -111,12 +111,21 @@ def generate_answer(question: str, chunks: list[dict]) -> str:
         f"Question: {question}"
     )
 
+    # Build messages array: prior conversation turns + current question
+    messages = []
+    for turn in (history or []):
+        role = turn.get("role", "")
+        content = turn.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_message})
+
     with client.messages.stream(
         model=_MODEL,
         max_tokens=2048,
         thinking={"type": "adaptive"},
         system=_build_system(),
-        messages=[{"role": "user", "content": user_message}],
+        messages=messages,
     ) as stream:
         for text in stream.text_stream:
             yield text

@@ -559,6 +559,17 @@ function clearChat() {
   if (!confirm("Clear the conversation?")) return;
   const el = document.getElementById("messages");
   el.innerHTML = '<div class="welcome"><h2>Ask anything about your documents</h2><p>Upload files or sync from M365, then ask questions here.</p></div>';
+  _history.length = 0;
+}
+
+// ── Conversation history (last 3 turns for multi-turn context) ───────────
+const _history = [];  // [{role, content}]
+const _MAX_HISTORY = 3;
+
+function _pushHistory(role, content) {
+  _history.push({ role, content });
+  // Keep last _MAX_HISTORY complete exchanges (each = 2 entries)
+  while (_history.length > _MAX_HISTORY * 2) _history.shift();
 }
 
 // ── Chat ──────────────────────────────────────────────
@@ -615,7 +626,12 @@ async function ask(question) {
     const r = await fetch("/api/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, n_results: 10, filters: getActiveFilters() }),
+      body: JSON.stringify({
+        question,
+        n_results: 10,
+        filters: getActiveFilters(),
+        history: [..._history],  // send current history before this turn
+      }),
     });
     if (!r.ok) throw new Error(await r.text());
 
@@ -644,6 +660,11 @@ async function ask(question) {
           bubble.style.color = "var(--danger)";
         }
       }
+    }
+    // Record this exchange in history for next turn
+    if (buffer) {
+      _pushHistory("user", question);
+      _pushHistory("assistant", buffer);
     }
   } catch (e) {
     bubble.textContent = `Error: ${e.message}`;

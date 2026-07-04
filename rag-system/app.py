@@ -324,6 +324,7 @@ def query_rag():
 
     n = int(data.get("n_results", 5))
     filters = data.get("filters") or {}
+    history = data.get("history") or []  # [{role, content}, ...] last N turns
 
     # HyDE: generate hypothetical passage in the main request thread (before SSE opens)
     # then merge with a standard query for best-of-both retrieval.
@@ -353,7 +354,7 @@ def query_rag():
     def full_stream():
         yield f"data:sources:{json.dumps(sources_used)}\n\n"
         try:
-            for token in generate_answer(question, chunks):
+            for token in generate_answer(question, chunks, history=history):
                 # JSON-encode each token so embedded newlines never break SSE framing
                 yield f"data:t:{json.dumps(token)}\n\n"
         except Exception as exc:
