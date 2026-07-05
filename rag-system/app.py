@@ -693,6 +693,50 @@ def ingest_attachments():
     })
 
 
+# ── Scripts panel ────────────────────────────────────────────────────────
+
+import subprocess
+
+_SCRIPTS = {
+    "ingest-todo":       [r"C:\ParamountRAG\scripts\ingest_todo.py"],
+    "sync-incremental":  [r"C:\ParamountRAG\scripts\sync_outlook.py", "--ingest"],
+    "sync-full":         [r"C:\ParamountRAG\scripts\sync_outlook.py", "--full", "--ingest"],
+}
+
+
+@app.route("/api/scripts/<script_id>", methods=["POST"])
+def run_script(script_id):
+    if script_id not in _SCRIPTS:
+        return jsonify({"error": f"Unknown script: {script_id}"}), 404
+
+    import sys
+    args = [sys.executable] + _SCRIPTS[script_id]
+
+    def _stream():
+        try:
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=r"C:\GIT\rag-system",
+            )
+            for line in proc.stdout:
+                yield f"data:{json.dumps(line.rstrip())}\n\n"
+            proc.wait()
+            yield f"data:{json.dumps('--- exit code: ' + str(proc.returncode) + ' ---')}\n\n"
+        except Exception as exc:
+            yield f"data:{json.dumps('ERROR: ' + str(exc))}\n\n"
+        yield "data:[DONE]\n\n"
+
+    return Response(
+        stream_with_context(_stream()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── Dashboard tracking panels ─────────────────────────────────────────────
 
 from dashboard_db import (

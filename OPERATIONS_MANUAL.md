@@ -2,7 +2,7 @@
 
 **System:** Paramount Pictures Oracle Fusion 10/1 Go-Live Intelligence RAG  
 **Maintained by:** Kevin Budz (OTC Track, Oracle Contractor)  
-**Last updated:** 2026-07-03  
+**Last updated:** 2026-07-05  
 **Go-live date:** 2026-10-01
 
 ---
@@ -171,49 +171,47 @@ Uses Claude Opus 4.8 (`claude-opus-4-8`) via Anthropic API. Requires
 
 ## 4. Daily Operations — Email Sync & Ingest
 
-This is the most common operation. Do this whenever you have new emails to add.
+### Easiest method — UI Scripts panel (recommended):
 
-### Full procedure (use when you want ALL emails, not just new ones):
+Open `http://localhost:5000` and use the **Scripts** panel in the sidebar:
 
-**Step 1 — Delete the sync cursor (forces full re-sync):**
-```
-del C:\ParamountRAG\outlook\email\last_sync.txt
-```
+| Button | What it does |
+|--------|-------------|
+| **Incremental Sync** | Pulls new Outlook emails since last sync, ingests them. Use daily. |
+| **Full Sync** | Re-exports ALL Outlook email (ignores cursor), then ingests. Use when emails were missed. Takes several minutes. |
+| **Ingest Todo Folder** | Ingests all files in `C:\Paramount\todo`, moves each to `C:\Paramount\done`. |
 
-**Step 2 — Run the Outlook COM sync:**
-```
-cd C:\ParamountRAG
-python scripts\sync_outlook.py --mail
-```
-- Requires Outlook desktop app to be open and signed in
-- Exports all inbox emails (including subfolders) to `emails.json`
-- Skipped folders: Sync Issues, T&E, Asana, Training, Deleted Items, Drafts
+Live output streams into the log window below the buttons. Chunk count updates when done.
 
-**Step 3 — Ingest into ChromaDB via the UI:**
-- Open `http://localhost:5000`
-- Click **"Ingest emails.json"** button
-- OR hit the API directly:
-```
-curl -X POST http://localhost:5000/api/ingest/email-json
-```
+### Automatic schedule:
+Two Windows Task Scheduler jobs run incremental sync automatically:
+- **8:00 AM** daily — `ParamountRAG-Sync-8AM`
+- **12:00 PM** daily — `ParamountRAG-Sync-Noon`
+- **Flask must be running** at those times or ingest step will fail (Outlook export still completes — no emails lost, but they won't hit ChromaDB until next manual ingest)
 
-### Incremental procedure (use for daily new emails only):
+### Command line (alternative):
+```
+cd C:\ParamountRAG\scripts
 
-Skip Step 1 — just run Steps 2 and 3. The cursor in `last_sync.txt` picks up
-from where it left off.
+# Incremental (daily)
+python sync_outlook.py --ingest
+
+# Full historical re-sync
+python sync_outlook.py --full --ingest
+```
 
 ### Key files:
 | File | Path | Purpose |
 |------|------|---------|
 | Email archive | `C:\ParamountRAG\outlook\email\emails.json` | Input to ingest |
-| Sync cursor | `C:\ParamountRAG\outlook\email\last_sync.txt` | Delete for full re-sync |
+| Sync cursor | `C:\ParamountRAG\outlook\email\last_sync.txt` | Tracks last sync time |
 | Sync script | `C:\ParamountRAG\scripts\sync_outlook.py` | Outlook COM exporter |
 | Email parser | `C:\GIT\rag-system\rag\email_json.py` | Parses JSON → chunks |
 
 ### CRITICAL:
 - **NEVER use Graph API (`ingest_email.py`) for email** — always use the COM pipeline
 - After ingest, check the skipped_empty count in the response — silent skips indicate a problem
-- HTML-only emails require `html_body` field to be processed (fixed 2026-07-02)
+- Skipped folders: Sync Issues, T&E, Asana, Training, Deleted Items, Drafts
 
 ---
 
@@ -261,10 +259,20 @@ python scripts\ingest_vtt.py path\to\file.vtt
 
 ## 6. Document Ingest
 
-### Via the web UI (recommended):
+### Todo folder workflow (recommended for ad-hoc files):
+
+1. Drop files into `C:\Paramount\todo`
+2. Click **Ingest Todo Folder** in the UI Scripts panel (or run `python ingest_todo.py`)
+3. Files are ingested and automatically moved to `C:\Paramount\done`
+
+Supported types: PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, MSG, ZIP
+
+**Script:** `C:\ParamountRAG\scripts\ingest_todo.py`
+
+### Via the web UI drag-and-drop:
 - Open `http://localhost:5000`
-- Drag and drop files or click Upload
-- Supported types: PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, VTT, ZIP
+- Drag and drop files onto the Upload zone, or click "browse files"
+- Files are ingested but NOT moved/tracked (use todo workflow if you want tracking)
 
 ### Via script (folder batch):
 
@@ -278,17 +286,11 @@ python ingest_folder.py "C:\path\to\folder"
 ### Via ZIP upload (large batches):
 Use the ZIP upload endpoint in the UI — streams per-file progress, resumes on retry.
 
-### Asana data ingest into ChromaDB:
+### Asana RAID/RICEFW exports:
+Export from Asana as CSV → drop in `C:\Paramount\todo` → click **Ingest Todo Folder**.
+The old method (dedicated ingest scripts) still works but the todo workflow is simpler.
 
-These scripts ingest the Asana CSV exports as searchable documents:
-
-```
-cd C:\GIT\rag-system
-python ingest_asana_raid.py
-python ingest_asana_ricefw.py
-```
-
-**Note:** These ingest into ChromaDB (for RAG search). The dashboard
+**Note:** Asana CSVs go into ChromaDB (for RAG search). The dashboard
 `sync_from_asana.py` is separate — it loads structured data into `dashboard.db`
 for the tracking panels, not ChromaDB.
 

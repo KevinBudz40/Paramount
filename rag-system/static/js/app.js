@@ -736,6 +736,46 @@ async function loadSchema() {
   } catch (_) {}
 }
 
+// ── Scripts panel ─────────────────────────────────────
+
+async function runScript(scriptId) {
+  const logEl = document.getElementById("scripts-log");
+  const btnIds = ["btn-ingest-todo", "btn-sync-incremental", "btn-sync-full"];
+
+  // Disable all buttons, show log
+  btnIds.forEach(id => { const b = document.getElementById(id); if (b) b.disabled = true; });
+  logEl.hidden = false;
+  logEl.textContent = "";
+
+  try {
+    const resp = await fetch(`/api/scripts/${scriptId}`, { method: "POST" });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5);
+        if (payload === "[DONE]") { loadSources(); break; }
+        try {
+          logEl.textContent += JSON.parse(payload) + "\n";
+          logEl.scrollTop = logEl.scrollHeight;
+        } catch (_) {}
+      }
+    }
+  } catch (e) {
+    logEl.textContent += `\nError: ${e.message}`;
+  } finally {
+    btnIds.forEach(id => { const b = document.getElementById(id); if (b) b.disabled = false; });
+  }
+}
+
 // ── Init ──────────────────────────────────────────────
 checkM365Status();
 loadSchema();
