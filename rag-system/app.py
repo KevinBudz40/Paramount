@@ -29,6 +29,7 @@ ALLOWED_EXTENSIONS = {
     ".docx", ".doc",
     ".xlsx", ".xls",
     ".pptx",
+    ".msg",
     ".zip",
 }
 
@@ -328,13 +329,14 @@ def query_rag():
 
     # HyDE: generate hypothetical passage in the main request thread (before SSE opens)
     # then merge with a standard query for best-of-both retrieval.
-    from rag.store import _generate_hypothetical
+    from rag.store import _generate_hypothetical, _rewrite_queries
     try:
         hypothetical = _generate_hypothetical(question)
+        extra_queries = _rewrite_queries(question)
         chunks = hyde_query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR,
-                            hypothetical=hypothetical)
+                            hypothetical=hypothetical, extra_queries=extra_queries)
     except Exception:
-        # Fallback to standard query if HyDE generation fails
+        # Fallback to standard query if HyDE/rewrite generation fails
         chunks = query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR)
 
     # Expand each chunk with its neighbouring chunks for fuller context

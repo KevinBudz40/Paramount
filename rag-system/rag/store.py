@@ -183,6 +183,34 @@ def expand_context(items: list[dict], persist_dir: str = "./chroma_db") -> list[
     return expanded
 
 
+def _rewrite_queries(question: str) -> list[str]:
+    """
+    Query rewriting: use Haiku to decompose the question into 2-3 focused
+    sub-queries that surface documents the original phrasing might miss.
+    Returns a list of sub-queries (not including the original question).
+    """
+    import anthropic
+    from pathlib import Path
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=200,
+        system=(
+            "You are a search query optimizer for an Oracle Fusion ERP project "
+            "knowledge base containing emails, documents, and meeting notes. "
+            "Given a question, output 2 alternative search queries that would "
+            "retrieve different but relevant documents. Use specific Oracle/ERP "
+            "terminology. Output ONLY the queries, one per line, no numbering, "
+            "no explanation."
+        ),
+        messages=[{"role": "user", "content": question}],
+    )
+    lines = [l.strip() for l in resp.content[0].text.strip().splitlines() if l.strip()]
+    return lines[:2]
+
+
 def _generate_hypothetical(question: str) -> str:
     """
     HyDE: ask Claude to write a short hypothetical document that would answer
@@ -217,13 +245,14 @@ def hyde_query(
     filters: dict | None = None,
     persist_dir: str = "./chroma_db",
     hypothetical: str = "",
+    extra_queries: list[str] | None = None,
 ) -> list[dict]:
     """
     HyDE + multi-query retrieval:
     1. Use pre-generated hypothetical passage (generated in main request thread)
-    2. Retrieve chunks using the hypothetical (catches document-language matches)
-    3. Retrieve chunks using the original question (catches keyword matches)
-    4. Merge, deduplicate by source, and rerank — best of both searches
+    2. Use pre-generated sub-queries from query rewriting
+    3. Retrieve chunks using all query variants in a single ChromaDB call
+    4. Merge, deduplicate by source+chunk, and rerank — best of all searches
     """
     collection = _get_collection(persist_dir)
     if collection.count() == 0:
@@ -232,11 +261,16 @@ def hyde_query(
     where = build_where_clause(filters or {})
     candidate_n = min(n_results * 5, collection.count())
 
-    if not hypothetical:
+    if not hypothetical and not extra_queries:
         return query(question, n_results=n_results, filters=filters, persist_dir=persist_dir)
 
-    # Query with both the pre-generated hypothetical and the original question
-    query_texts = [hypothetical, question]
+    # Build full query list: original + hypothetical + rewrites
+    query_texts = [question]
+    if hypothetical:
+        query_texts.append(hypothetical)
+    for q in (extra_queries or []):
+        if q and q not in query_texts:
+            query_texts.append(q)
     kwargs: dict = dict(query_texts=query_texts, n_results=candidate_n)
     if where:
         kwargs["where"] = where

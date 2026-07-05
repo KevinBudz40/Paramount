@@ -44,7 +44,7 @@ SKIP_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp",
 # All extensions this pipeline can extract text from
 INGESTIBLE_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx",
-    ".txt", ".md", ".csv", ".svg", ".vtt",
+    ".txt", ".md", ".csv", ".svg", ".vtt", ".msg",
 }
 
 
@@ -177,6 +177,26 @@ def load_pptx(path: Path) -> str:
     return "\n\n".join(parts)
 
 
+def load_msg(path: Path) -> str:
+    """Extract text from an Outlook .msg file."""
+    import extract_msg
+    msg = extract_msg.Message(str(path))
+    parts = []
+    if msg.subject:
+        parts.append(f"Subject: {msg.subject}")
+    if msg.sender:
+        parts.append(f"From: {msg.sender}")
+    if msg.date:
+        parts.append(f"Date: {msg.date}")
+    if msg.to:
+        parts.append(f"To: {msg.to}")
+    if msg.cc:
+        parts.append(f"Cc: {msg.cc}")
+    if msg.body:
+        parts.append(f"\n{msg.body}")
+    return "\n".join(parts)
+
+
 def load_document(path: Path) -> str | None:
     """
     Load a document and return its text content.
@@ -195,6 +215,8 @@ def load_document(path: Path) -> str | None:
         return load_xlsx(path)
     if suffix == ".pptx":
         return load_pptx(path)
+    if suffix == ".msg":
+        return load_msg(path)
     if suffix in (".txt", ".md", ".csv", ".svg", ".vtt"):
         return load_txt(path)
 
