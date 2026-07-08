@@ -1,6 +1,7 @@
 """RAG system Flask application."""
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -316,6 +317,49 @@ def remove_source(source_name):
 
 # ── Query / generation ────────────────────────────────────────────────────
 
+_ID_PATTERN = re.compile(r'\b(INT\d+|RICEFW[-\s]?\d+|RICE[-\s]?\d+)\b', re.IGNORECASE)
+
+
+def _keyword_chunks(question: str, persist_dir: str, max_per_id: int = 3) -> list[dict]:
+    """Return chunks that exactly contain any INT### / RICEFW-### ids found in the question."""
+    ids = list({m.group(0).upper().replace(" ", "-") for m in _ID_PATTERN.finditer(question)})
+    if not ids:
+        return []
+    from rag.store import _get_collection, deserialize_metadata
+    collection = _get_collection(persist_dir)
+    hits: list[dict] = []
+    seen_ids: set[str] = set()
+    batch = 2000
+    offset = 0
+    while True:
+        results = collection.get(include=["documents", "metadatas"], limit=batch, offset=offset)
+        if not results["ids"]:
+            break
+        for doc, meta, cid in zip(results["documents"], results["metadatas"], results["ids"]):
+            for tid in ids:
+                if tid in doc.upper() and cid not in seen_ids:
+                    item = deserialize_metadata(meta)
+                    item["text"] = doc
+                    item["score"] = 1.0
+                    hits.append(item)
+                    seen_ids.add(cid)
+                    break
+        if len(results["ids"]) < batch:
+            break
+        offset += batch
+    # Cap per id to avoid flooding context
+    counts: dict[str, int] = {}
+    capped = []
+    for h in hits:
+        for tid in ids:
+            if tid in h["text"].upper():
+                counts[tid] = counts.get(tid, 0) + 1
+                if counts[tid] <= max_per_id:
+                    capped.append(h)
+                break
+    return capped
+
+
 @app.route("/api/query", methods=["POST"])
 def query_rag():
     data = request.get_json(silent=True) or {}
@@ -326,6 +370,10 @@ def query_rag():
     n = int(data.get("n_results", 5))
     filters = data.get("filters") or {}
     history = data.get("history") or []  # [{role, content}, ...] last N turns
+
+    # Keyword pre-pass: inject exact-match chunks for ID codes (INT###, RICEFW-###)
+    # before semantic search so sparse identifiers are never missed.
+    keyword_hits = _keyword_chunks(question, CHROMA_DIR)
 
     # HyDE: generate hypothetical passage in the main request thread (before SSE opens)
     # then merge with a standard query for best-of-both retrieval.
@@ -338,6 +386,11 @@ def query_rag():
     except Exception:
         # Fallback to standard query if HyDE/rewrite generation fails
         chunks = query(question, n_results=n, filters=filters, persist_dir=CHROMA_DIR)
+
+    # Merge keyword hits at the front, dedup by source+chunk_index
+    if keyword_hits:
+        seen = {(c.get("source"), c.get("chunk_index")) for c in chunks}
+        chunks = [h for h in keyword_hits if (h.get("source"), h.get("chunk_index")) not in seen] + chunks
 
     # Expand each chunk with its neighbouring chunks for fuller context
     chunks = expand_context(chunks, persist_dir=CHROMA_DIR)
