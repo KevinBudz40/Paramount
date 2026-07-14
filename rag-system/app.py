@@ -105,6 +105,9 @@ def schema_info():
 
 # ── File upload ────────────────────────────────────────────────────────────
 
+MAX_UPLOAD_MB = 50  # matches ingest_todo.py's MAX_FILE_MB — parsing larger files (openpyxl/pandas load full workbook into memory) can OOM Flask
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload():
     try:
@@ -139,6 +142,14 @@ def _upload_inner():
         dest = UPLOAD_DIR / file.filename
         try:
             file.save(dest)
+            size_mb = dest.stat().st_size / (1024 * 1024)
+            if size_mb > MAX_UPLOAD_MB:
+                dest.unlink(missing_ok=True)
+                results.append({
+                    "file": source_label,
+                    "error": f"File too large ({size_mb:.1f} MB > {MAX_UPLOAD_MB} MB limit) — skipped to avoid OOM",
+                })
+                continue
             if Path(file.filename).suffix.lower() == ".zip":
                 chunks, report = chunk_zip(dest)
                 count = add_chunks(chunks, doc_meta=doc_meta, persist_dir=CHROMA_DIR)
@@ -358,6 +369,18 @@ def _keyword_chunks(question: str, persist_dir: str, max_per_id: int = 3) -> lis
                     capped.append(h)
                 break
     return capped
+
+
+@app.route("/open")
+def open_file():
+    path = request.args.get("path", "").strip()
+    if not path:
+        return jsonify({"error": "no path"}), 400
+    resolved = Path(path).resolve()
+    if not resolved.exists():
+        return jsonify({"error": "file not found"}), 404
+    os.startfile(str(resolved))
+    return "", 204
 
 
 @app.route("/api/query", methods=["POST"])
@@ -692,6 +715,37 @@ def ingest_email_json():
     })
 
 
+def _source_log_upsert(source_key: str, full_path: str, fpath: Path, chunk_count: int) -> None:
+    """Write an attachment entry to source_log.db so the agent can build clickable /open links."""
+    import sqlite3 as _sqlite3
+    import hashlib as _hashlib
+    from datetime import datetime, timezone
+
+    source_log_db = str(Path(CHROMA_DIR) / "source_log.db")
+    try:
+        md5 = _hashlib.md5(Path(full_path).read_bytes()).hexdigest()
+    except Exception:
+        md5 = ""
+    now = datetime.now(timezone.utc).isoformat()
+    doc_type = fpath.suffix.lstrip(".").lower()
+    file_size = fpath.stat().st_size if fpath.exists() else 0
+    with _sqlite3.connect(source_log_db) as scon:
+        scon.execute(
+            """
+            INSERT INTO source_log (source_key, full_path, content_hash, doc_type, file_size, chunk_count, ingested_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_key) DO UPDATE SET
+                full_path    = excluded.full_path,
+                content_hash = excluded.content_hash,
+                doc_type     = excluded.doc_type,
+                file_size    = excluded.file_size,
+                chunk_count  = excluded.chunk_count,
+                ingested_at  = excluded.ingested_at
+            """,
+            (source_key, full_path, md5, doc_type, file_size, chunk_count, now),
+        )
+
+
 @app.route("/api/ingest/attachments", methods=["POST"])
 def ingest_attachments():
     """
@@ -723,6 +777,11 @@ def ingest_attachments():
             skipped += 1
             continue
 
+        mb = fpath.stat().st_size / (1024 * 1024)
+        if mb > 5:
+            skipped += 1
+            continue
+
         try:
             n = _ingest_file(fpath, source_label, CHROMA_DIR)
             if n == 0:
@@ -730,6 +789,7 @@ def ingest_attachments():
                 skipped += 1
             else:
                 _record(con, source_label, "ok", chunks=n)
+                _source_log_upsert(source_label, str(fpath.resolve()), fpath, n)
                 ingested += 1
         except Exception as exc:
             _record(con, source_label, "error", error=str(exc))

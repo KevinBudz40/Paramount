@@ -101,7 +101,33 @@ def load_pdf(path: Path) -> str:
 def load_docx(path: Path) -> str:
     from docx import Document
     doc = Document(str(path))
-    return "\n".join(p.text for p in doc.paragraphs)
+    parts: list[str] = []
+    for p in doc.paragraphs:
+        if p.text.strip():
+            parts.append(p.text)
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                parts.append(" | ".join(cells) + ".")
+    return "\n".join(parts)
+
+
+def load_xls(path: Path) -> str:
+    """Extract all sheet content from a legacy .xls workbook using xlrd."""
+    import xlrd
+    wb = xlrd.open_workbook(str(path))
+    parts: list[str] = []
+    for sheet_name in wb.sheet_names():
+        ws = wb.sheet_by_name(sheet_name)
+        rows: list[str] = []
+        for i in range(ws.nrows):
+            cells = [str(ws.cell_value(i, j)) for j in range(ws.ncols)]
+            if any(c.strip() for c in cells):
+                rows.append("\t".join(cells))
+        if rows:
+            parts.append(f"[Sheet: {sheet_name}]\n" + "\n".join(rows))
+    return "\n\n".join(parts)
 
 
 def load_xlsx(path: Path) -> str:
@@ -211,8 +237,10 @@ def load_document(path: Path) -> str | None:
         return load_pdf(path)
     if suffix in (".docx", ".doc"):
         return load_docx(path)
-    if suffix in (".xlsx", ".xls"):
+    if suffix == ".xlsx":
         return load_xlsx(path)
+    if suffix == ".xls":
+        return load_xls(path)
     if suffix == ".pptx":
         return load_pptx(path)
     if suffix == ".msg":

@@ -52,7 +52,14 @@ def add_chunks(chunks: list[dict], doc_meta: dict | None = None, persist_dir: st
         documents.append(chunk["text"])
         metadatas.append({**base, "source": chunk["source"], "chunk_index": chunk["chunk_index"]})
 
-    collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+    # ChromaDB max batch size is 5461 — split into batches
+    BATCH = 5000
+    for i in range(0, len(ids), BATCH):
+        collection.upsert(
+            ids=ids[i:i+BATCH],
+            documents=documents[i:i+BATCH],
+            metadatas=metadatas[i:i+BATCH],
+        )
     # Checkpoint every 500 chunks to flush WAL and reduce corruption risk on kill
     if len(ids) >= 500:
         checkpoint(persist_dir)
@@ -372,11 +379,16 @@ def list_sources(persist_dir: str = "./chroma_db") -> list[dict]:
 
 def delete_source(source_name: str, persist_dir: str = "./chroma_db") -> int:
     collection = _get_collection(persist_dir)
-    results = collection.get(where={"source": source_name}, include=["metadatas"])
-    ids = results["ids"]
-    if ids:
+    BATCH = 500
+    total = 0
+    while True:
+        results = collection.get(where={"source": source_name}, include=[], limit=BATCH)
+        ids = results["ids"]
+        if not ids:
+            break
         collection.delete(ids=ids)
-    return len(ids)
+        total += len(ids)
+    return total
 
 
 def doc_count(persist_dir: str = "./chroma_db") -> int:
