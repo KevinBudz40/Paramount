@@ -24,7 +24,7 @@ from rag.store import (
 _HERE = Path(__file__).resolve().parent
 UPLOAD_DIR = _HERE / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
-CHROMA_DIR = str(_HERE.parent / "chroma_db")
+CHROMA_DIR = os.environ.get("CHROMA_DIR", str(_HERE.parent / "chroma_db"))
 ALLOWED_EXTENSIONS = {
     ".pdf", ".txt", ".md", ".csv", ".svg", ".vtt",
     ".docx", ".doc",
@@ -376,6 +376,10 @@ def open_file():
     path = request.args.get("path", "").strip()
     if not path:
         return jsonify({"error": "no path"}), 400
+    if path.startswith("http://") or path.startswith("https://"):
+        import webbrowser
+        webbrowser.open(path)
+        return "", 204
     resolved = Path(path).resolve()
     if not resolved.exists():
         return jsonify({"error": "file not found"}), 404
@@ -814,6 +818,7 @@ _SCRIPTS = {
     "ingest-todo":       [r"C:\ParamountRAG\scripts\ingest_todo.py"],
     "sync-incremental":  [r"C:\ParamountRAG\scripts\sync_outlook.py", "--ingest"],
     "sync-full":         [r"C:\ParamountRAG\scripts\sync_outlook.py", "--full", "--ingest"],
+    "sync-tactiq":       [r"C:\ParamountRAG\scripts\sync_tactiq.py"],
 }
 
 

@@ -740,7 +740,7 @@ async function loadSchema() {
 
 async function runScript(scriptId) {
   const logEl = document.getElementById("scripts-log");
-  const btnIds = ["btn-ingest-todo", "btn-sync-incremental", "btn-sync-full"];
+  const btnIds = ["btn-ingest-todo", "btn-sync-incremental", "btn-sync-full", "btn-sync-tactiq"];
 
   // Disable all buttons, show log
   btnIds.forEach(id => { const b = document.getElementById(id); if (b) b.disabled = true; });

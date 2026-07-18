@@ -1,9 +1,9 @@
 # Paramount RAG System — Operations Manual
 
-**System:** Paramount Pictures Oracle Fusion 10/1 Go-Live Intelligence RAG  
+**System:** Paramount Pictures Oracle Fusion Phase 4a Go-Live Intelligence RAG  
 **Maintained by:** Kevin Budz (OTC Track, Oracle Contractor)  
-**Last updated:** 2026-07-05  
-**Go-live date:** 2026-10-01
+**Last updated:** 2026-07-15  
+**Go-live date:** 2027-01-01 (Phase 4a — moved from 2026-10-01)
 
 ---
 
@@ -13,14 +13,17 @@
 2. [Directory Map](#2-directory-map)
 3. [Core Components](#3-core-components)
 4. [Daily Operations — Email Sync & Ingest](#4-daily-operations--email-sync--ingest)
-5. [Meeting Transcription & Ingest](#5-meeting-transcription--ingest)
-6. [Document Ingest](#6-document-ingest)
-7. [Dashboard — Doc Requests & Deliverables](#7-dashboard--doc-requests--deliverables)
-8. [Audit & Health Checks](#8-audit--health-checks)
-9. [Backup & Recovery](#9-backup--recovery)
-10. [Flask Application — Routes Reference](#10-flask-application--routes-reference)
-11. [Critical Rules — What Not To Do](#11-critical-rules--what-not-to-do)
-12. [Troubleshooting](#12-troubleshooting)
+5. [Document Ingest — Batched (Primary)](#5-document-ingest--batched-primary)
+6. [Meeting Transcription & Ingest](#6-meeting-transcription--ingest)
+7. [Labeling Chunks](#7-labeling-chunks)
+8. [Agentic RAG (Streamlit UI)](#8-agentic-rag-streamlit-ui)
+9. [Shadow DB (chroma_db_new)](#9-shadow-db-chroma_db_new)
+10. [Dashboard — Doc Requests & Deliverables](#10-dashboard--doc-requests--deliverables)
+11. [Audit & Health Checks](#11-audit--health-checks)
+12. [Backup & Recovery](#12-backup--recovery)
+13. [Flask Application — Routes Reference](#13-flask-application--routes-reference)
+14. [Critical Rules — What Not To Do](#14-critical-rules--what-not-to-do)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -33,7 +36,7 @@ Claude Opus as the AI backbone.
 
 **Technology stack:**
 - Flask (Python) — web server, API, dashboard
-- ChromaDB — vector store (SQLite-backed, ~484K+ chunks, 8.9GB)
+- ChromaDB — vector store (SQLite-backed, ~434K chunks)
 - SentenceTransformers `all-MiniLM-L6-v2` — embedding model
 - Claude Opus 4.8 (`claude-opus-4-8`) — answer generation
 - SQLite `dashboard.db` — doc requests and deliverables tracking (separate from ChromaDB)
@@ -137,20 +140,21 @@ python app.py
 
 **Runs on:** `http://localhost:5000`  
 **Debug mode:** ON (auto-reloads on file save — see Critical Rules)  
-**ChromaDB path:** Hard-coded to `C:\GIT\chroma_db` via:
+**ChromaDB path:** Defaults to `C:\GIT\chroma_db`, overridable via env var:
 ```python
-CHROMA_DIR = str(_HERE.parent / "chroma_db")  # resolves to C:\GIT\chroma_db
+CHROMA_DIR = os.environ.get("CHROMA_DIR", str(_HERE.parent / "chroma_db"))
 ```
+Set `$env:CHROMA_DIR = "C:\GIT\chroma_db_new"` and `$env:PORT = "5001"` to run a shadow instance (see §9).
 
-### 3.2 ChromaDB (`C:\GIT\chroma_db\chroma.sqlite3`)
+### 3.2 ChromaDB (`C:\GIT\chroma_db\`)
 
 The production vector database. Contains all ingested content as searchable chunks.
 
-- **Size:** ~8.9GB, ~484K+ chunks
+- **Chunk count:** ~434K chunks (as of 2026-07-15)
 - **Collection name:** `rag_documents`
-- **Embedding model:** `all-MiniLM-L6-v2`
-- **Chunk dedup:** MD5 hash of `source:chunk_index` — safe to re-ingest
-- **NEVER** run scripts against this DB without `persist_dir=r"C:\GIT\chroma_db"`
+- **Embedding model:** `all-MiniLM-L6-v2` (384 dimensions)
+- **Source log:** `C:\GIT\chroma_db\source_log.db` — SQLite tracking full paths, MD5 hashes, chunk counts for every ingested file. Powers dedup and change detection.
+- **NEVER** run scripts against this DB without explicitly pointing at `C:\GIT\chroma_db`
 
 ### 3.3 Dashboard Database (`C:\GIT\dashboard.db`)
 
@@ -193,12 +197,18 @@ Two Windows Task Scheduler jobs run incremental sync automatically:
 ```
 cd C:\ParamountRAG\scripts
 
-# Incremental (daily)
-python sync_outlook.py --ingest
+# Incremental (daily) — USE THIS by default
+python sync_outlook.py --mail
 
-# Full historical re-sync
-python sync_outlook.py --full --ingest
+# Then ingest via Flask:
+# POST http://127.0.0.1:5000/api/ingest/email-json
+# POST http://127.0.0.1:5000/api/ingest/attachments
+
+# Full historical re-sync — only when resetting or recovering
+python sync_outlook.py --mail --full
 ```
+
+> **IMPORTANT:** Do NOT use `--full` for routine syncs. It re-exports all 600+ emails every time, making the ingest re-process everything unnecessarily. Use `--mail` (incremental) by default.
 
 ### Key files:
 | File | Path | Purpose |
@@ -215,7 +225,42 @@ python sync_outlook.py --full --ingest
 
 ---
 
-## 5. Meeting Transcription & Ingest
+## 5. Document Ingest — Batched (Primary)
+
+**Script:** `C:\ParamountRAG\scripts\ingest_batched.py`
+
+This is the primary way to ingest SharePoint-synced files and the `C:\Paramount\done` folder. Runs in batches of 75, restarting Flask between batches to control memory. Auto-runs `label_chunks.py` at the end if anything was ingested.
+
+### Watch roots:
+1. `C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4a October 2026 Go-Live` (SharePoint sync)
+2. `C:\Paramount\done`
+
+### Run:
+```
+python C:\ParamountRAG\scripts\ingest_batched.py
+```
+
+### How it works:
+- Scans watch roots for new or changed files (MD5 hash comparison via source_log.db)
+- Skips files on the skip list, files >5MB, and MP4 files
+- 3-layer hash dedup: scan level, batch level, DB level
+- Restarts Flask between batches to flush ChromaDB HNSW memory
+- After all batches: stops Flask → runs label_chunks.py --apply → restarts Flask
+
+### Skip list management:
+Maintained in `source_log.db`. Add entries via:
+```python
+from source_log import add_skip
+add_skip("Archive", "folder", "Skip archive folders")
+add_skip("filename.xlsx", "filename", "Raw data dump")
+```
+
+### MAX_FILE_MB = 5
+Files over 5MB are skipped silently (re-evaluated each run, not added to skip list).
+
+---
+
+## 6. Meeting Transcription & Ingest
 
 ### From MP4 recordings (Whisper transcription):
 
@@ -257,7 +302,55 @@ python scripts\ingest_vtt.py path\to\file.vtt
 
 ---
 
-## 6. Document Ingest
+## 7. Labeling Chunks
+
+**Script:** `C:\ParamountRAG\scripts\label_chunks.py`
+
+Labels chunks with doc type (Spreadsheet, FDD, Meeting, Tracker, etc.) using a lightweight classifier.
+
+### Rules:
+- **Must run with Flask DOWN** — running while Flask is up causes double ChromaDB load
+- Runs automatically at end of `ingest_batched.py` (stops Flask, labels, restarts Flask)
+- Run manually only after email/attachment ingest (which doesn't auto-label):
+
+```
+# Stop Flask first, then:
+python C:\ParamountRAG\scripts\label_chunks.py --apply
+# Restart Flask when done
+```
+
+---
+
+## 8. Agentic RAG (Streamlit UI)
+
+A separate Claude tool-use agent that iteratively searches ChromaDB (read-only). Better than the regular UI for people lookups and complex multi-source questions.
+
+**Start:** `C:\GIT\start_streamlit.bat`  
+**URL:** `http://localhost:8501`  
+**Model:** `claude-opus-4-8` with adaptive thinking  
+**Tool:** `query_chroma` (semantic) + `keyword_search` (exact text match)  
+**Scripts:** `C:\ParamountRAG\scripts\agent.py` + `app_agent.py`
+
+Flask (`localhost:5000`) must also be running for the `/open?path=...` clickable links to work.
+
+---
+
+## 9. Shadow DB (chroma_db_new)
+
+A parallel ChromaDB at `C:\GIT\chroma_db_new` built from scratch without touching the live DB. Used to create a clean DB (no orphan chunks) before swapping to production.
+
+| Script | Purpose |
+|--------|---------|
+| `C:\ParamountRAG\scripts\ingest_new_db.py` | Ingest all files into chroma_db_new (targets port 5001) |
+| `C:\ParamountRAG\scripts\start_flask_new.ps1` | Start shadow Flask on port 5001 pointing at chroma_db_new |
+| `C:\ParamountRAG\scripts\compare_chroma.py` | Compare old vs new DB (chunk counts, missing sources) |
+| `C:\ParamountRAG\scripts\swap_chroma.ps1` | Swap chroma_db_new → chroma_db (requires "YES" confirmation) |
+
+**Shadow DB status (as of 2026-07-15):** Built, not yet swapped to production. Kevin will swap after hours once email ingest into new DB is done.
+
+---
+
+## 10. Document Ingest — Ad-hoc
 
 ### Todo folder workflow (recommended for ad-hoc files):
 
@@ -296,7 +389,7 @@ for the tracking panels, not ChromaDB.
 
 ---
 
-## 7. Dashboard — Doc Requests & Deliverables
+## 10. Dashboard — Doc Requests & Deliverables
 
 Access: `http://localhost:5000/dashboard`
 
@@ -358,7 +451,7 @@ GET  /api/phases                              List distinct phase values
 
 ---
 
-## 8. Audit & Health Checks
+## 11. Audit & Health Checks
 
 ### Full knowledge base audit:
 
@@ -397,7 +490,7 @@ python scripts\query_to_file.py "Who is the backup for Prem James?" --heading "P
 
 ---
 
-## 9. Backup & Recovery
+## 12. Backup & Recovery
 
 ### Nightly automated backup:
 
@@ -454,7 +547,7 @@ ChromaDB is NOT in git (too large). Recovery requires:
 
 ---
 
-## 10. Flask Application — Routes Reference
+## 13. Flask Application — Routes Reference
 
 | Route | Method | Purpose |
 |-------|--------|---------|
@@ -468,6 +561,8 @@ ChromaDB is NOT in git (too large). Recovery requires:
 | `/api/upload` | POST | Upload + ingest document files |
 | `/api/ingest/zip` | POST | Upload + ingest ZIP (streaming progress) |
 | `/api/ingest/email-json` | POST | Ingest emails.json into ChromaDB |
+| `/api/ingest/attachments` | POST | Ingest email attachments into ChromaDB |
+| `/open` | GET | Open a file in Windows (`?path=C:/...`) — used by agentic RAG for clickable links |
 | `/api/schema` | GET | Metadata schema (workstreams, doc types) |
 | `/api/phases` | GET | Distinct phase values for dashboard filter |
 | `/api/doc_requests` | GET/POST | List / add doc requests |
@@ -484,7 +579,7 @@ ChromaDB is NOT in git (too large). Recovery requires:
 
 ---
 
-## 11. Critical Rules — What Not To Do
+## 14. Critical Rules — What Not To Do
 
 ### NEVER do these:
 
@@ -511,9 +606,21 @@ ChromaDB is NOT in git (too large). Recovery requires:
    - `C:\GIT\rag-system\rag\email_json.py` → `_SKIP_FOLDERS`  
    - `C:\ParamountRAG\scripts\sync_outlook.py` → `_SKIP_FOLDER_FRAGMENTS`
 
+7. **Don't run label_chunks.py while Flask is running**  
+   Double ChromaDB load causes memory explosion. Stop Flask first, label, restart.
+
+8. **Don't use `--full` for routine email syncs**  
+   Use `sync_outlook.py --mail` (incremental). `--full` re-exports all 600+ emails every time.
+
+9. **Don't ingest MP4 files**  
+   They are large and useless for RAG. Transcribe to VTT first if needed.
+
+10. **Don't run concurrent ingests**  
+    ingest_batched + email-json + attachments simultaneously will crash Flask. Always sequential.
+
 ---
 
-## 12. Troubleshooting
+## 15. Troubleshooting
 
 ### Dashboard shows 0 chunks / "DATABASE OFFLINE"
 - Flask is not running → `cd C:\GIT\rag-system && python app.py`
