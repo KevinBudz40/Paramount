@@ -2,7 +2,7 @@
 
 **System:** Paramount Pictures Oracle Fusion Phase 4a Go-Live Intelligence RAG  
 **Maintained by:** Kevin Budz (OTC Track, Oracle Contractor)  
-**Last updated:** 2026-07-15  
+**Last updated:** 2026-07-18  
 **Go-live date:** 2027-01-01 (Phase 4a — moved from 2026-10-01)
 
 ---
@@ -88,6 +88,11 @@ C:\GIT\
 C:\ParamountRAG\
 ├── scripts\
 │   ├── sync_outlook.py           ← PRIMARY email + calendar sync (COM/Outlook)
+│   ├── ingest_todo.py            ← PRIMARY file ingest (watches local_docs + SharePoint)
+│   ├── sync_tactiq.py            ← Tactiq meeting summary sync (Claude Code session only)
+│   ├── ingest_tactiq.py          ← ingest_meeting() helper called by sync_tactiq.py
+│   ├── label_chunks.py           ← Backfill doc_type labels (run with Flask DOWN)
+│   ├── source_log.py             ← source_log.db helper (upsert, lookup, skip list)
 │   ├── audit_chroma.py           ← Full KB audit report
 │   ├── reconcile.py              ← Compare emails.json vs ChromaDB
 │   ├── query_to_file.py          ← CLI: query RAG → write answer to file
@@ -113,11 +118,11 @@ C:\ParamountRAG\
     └── transcribe_log.txt        ← Output of transcribe_mp4.py
 
 C:\Paramount\
-├── 10-1\
-│   └── meetings\                 ← Alternate meeting recordings location
-└── done\
-    ├── Oracle_ERP_-_RAID.csv     ← Asana RAID export (re-export periodically)
-    └── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export (re-export periodically)
+├── local_docs\                   ← PRIMARY drop folder for ad-hoc files (replaces todo/done)
+│   ├── Oracle_ERP_-_RAID.csv     ← Asana RAID export (re-export periodically)
+│   └── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export (re-export periodically)
+└── 10-1\
+    └── meetings\                 ← Alternate meeting recordings location
 
 C:\Users\kevin\OneDrive\Backups\
 ├── chroma_db\                    ← Nightly mirror of production ChromaDB
@@ -150,7 +155,7 @@ Set `$env:CHROMA_DIR = "C:\GIT\chroma_db_new"` and `$env:PORT = "5001"` to run a
 
 The production vector database. Contains all ingested content as searchable chunks.
 
-- **Chunk count:** ~434K chunks (as of 2026-07-15)
+- **Chunk count:** ~441K chunks (as of 2026-07-18); 1,369 tracked sources in source_log
 - **Collection name:** `rag_documents`
 - **Embedding model:** `all-MiniLM-L6-v2` (384 dimensions)
 - **Source log:** `C:\GIT\chroma_db\source_log.db` — SQLite tracking full paths, MD5 hashes, chunk counts for every ingested file. Powers dedup and change detection.
@@ -183,15 +188,14 @@ Open `http://localhost:5000` and use the **Scripts** panel in the sidebar:
 |--------|-------------|
 | **Incremental Sync** | Pulls new Outlook emails since last sync, ingests them. Use daily. |
 | **Full Sync** | Re-exports ALL Outlook email (ignores cursor), then ingests. Use when emails were missed. Takes several minutes. |
-| **Ingest Todo Folder** | Ingests all files in `C:\Paramount\todo`, moves each to `C:\Paramount\done`. |
+| **Ingest Todo Folder** | Scans `C:\Paramount\local_docs` and the Phase 4a SharePoint folder for new/changed files and ingests them. Files are NOT moved. |
+| **Sync Tactiq** | Spawns a Claude session to fetch new Tactiq meeting summaries and ingest them. **Must be clicked from within an active Claude Code session** — Tactiq MCP auth is tied to the session. |
 
 Live output streams into the log window below the buttons. Chunk count updates when done.
 
-### Automatic schedule:
-Two Windows Task Scheduler jobs run incremental sync automatically:
-- **8:00 AM** daily — `ParamountRAG-Sync-8AM`
-- **12:00 PM** daily — `ParamountRAG-Sync-Noon`
-- **Flask must be running** at those times or ingest step will fail (Outlook export still completes — no emails lost, but they won't hit ChromaDB until next manual ingest)
+### Schedule:
+**No automated schedule.** All syncs are manual via the Scripts panel buttons above.
+(The "RAG All Syncs" Windows Task Scheduler job was removed 2026-07-18.)
 
 ### Command line (alternative):
 ```
@@ -225,30 +229,42 @@ python sync_outlook.py --mail --full
 
 ---
 
-## 5. Document Ingest — Batched (Primary)
+## 5. Document Ingest — Files (Primary)
 
-**Script:** `C:\ParamountRAG\scripts\ingest_batched.py`
+**Script:** `C:\ParamountRAG\scripts\ingest_todo.py`  
+**UI button:** **Ingest Todo Folder** in the Scripts panel
 
-This is the primary way to ingest SharePoint-synced files and the `C:\Paramount\done` folder. Runs in batches of 75, restarting Flask between batches to control memory. Auto-runs `label_chunks.py` at the end if anything was ingested.
+This is the primary way to ingest SharePoint-synced files and local documents.
 
 ### Watch roots:
-1. `C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4a October 2026 Go-Live` (SharePoint sync)
-2. `C:\Paramount\done`
+1. `C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4a October 2026 Go-Live` (SharePoint OneDrive sync)
+2. `C:\Paramount\local_docs` (manual drop folder — replaces the old todo/done split)
 
 ### Run:
 ```
-python C:\ParamountRAG\scripts\ingest_batched.py
+# Via UI button (recommended):
+Click "Ingest Todo Folder" in Scripts panel
+
+# Or command line:
+python C:\ParamountRAG\scripts\ingest_todo.py
+
+# With --no-label flag (skips label_chunks — use for scheduled/automated runs):
+python C:\ParamountRAG\scripts\ingest_todo.py --no-label
 ```
 
 ### How it works:
-- Scans watch roots for new or changed files (MD5 hash comparison via source_log.db)
+- Scans both watch roots recursively for supported file types
 - Skips files on the skip list, files >5MB, and MP4 files
-- 3-layer hash dedup: scan level, batch level, DB level
-- Restarts Flask between batches to flush ChromaDB HNSW memory
-- After all batches: stops Flask → runs label_chunks.py --apply → restarts Flask
+- MD5 hash dedup via `source_log.db` — unchanged files are skipped, changed files are re-ingested
+- Files are **never moved** — source location is tracked in source_log
+- Auto-runs `label_chunks.py --apply` at end IF Flask is not running (skips labeling if Flask is up)
+
+### Dropping files for ingest:
+Simply copy files into `C:\Paramount\local_docs` and click **Ingest Todo Folder**.
+No need to manage todo/done subfolders — the hash tracker handles dedup.
 
 ### Skip list management:
-Maintained in `source_log.db`. Add entries via:
+Maintained in `source_log.db` (226 entries as of 2026-07-18). Add entries via:
 ```python
 from source_log import add_skip
 add_skip("Archive", "folder", "Skip archive folders")
@@ -299,6 +315,20 @@ python transcribe_backlog.py
 cd C:\ParamountRAG
 python scripts\ingest_vtt.py path\to\file.vtt
 ```
+
+### From Tactiq (meeting summaries):
+
+**Script:** `C:\ParamountRAG\scripts\sync_tactiq.py`  
+**UI button:** **Sync Tactiq** in the Scripts panel  
+**Auth:** Tactiq MCP is only authenticated inside an active Claude Code session. The button **must be clicked from within Claude Code** — it will fail with 401 if run from a scheduled task or standalone terminal.
+
+How it works:
+1. Reads `source_log.db` to find already-ingested Tactiq meeting IDs
+2. Spawns a `claude -p` subprocess with Tactiq MCP tools
+3. Claude fetches new meeting summaries and calls `ingest_meeting()` for each
+4. Ingested chunks have `doc_type=tactiq`; clickable links point to `https://app.tactiq.io/...`
+
+**Run manually anytime** by clicking the Sync Tactiq button in the UI while Claude Code is open. As of 2026-07-18: 23 meetings ingested, 102 chunks.
 
 ---
 
@@ -599,8 +629,8 @@ ChromaDB is NOT in git (too large). Recovery requires:
 4. **Don't delete `chroma_db\` without a confirmed backup**  
    This is irreplaceable without a full re-ingest (days of work).
 
-5. **Don't use `collection.get()` for bulk metadata queries**  
-   At 484K chunks it times out (>90s). Always query SQLite directly.
+5. **Don't use `collection.get()` for full table scans**  
+   At 441K chunks it times out (>90s). Use `where_document={"$contains": "..."}` for text search, or query `source_log.db` / `chroma.sqlite3` directly for metadata queries.
 
 6. **Don't add new folders to skip without updating BOTH places:**  
    - `C:\GIT\rag-system\rag\email_json.py` → `_SKIP_FOLDERS`  
