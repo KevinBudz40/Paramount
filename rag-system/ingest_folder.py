@@ -7,8 +7,12 @@ Usage:
 
 Safe to stop and restart — already-ingested files are tracked in ingest_tracker.db
 and will never be re-processed.
+
+MD5 dedup: files whose content is identical to an already-ingested file are skipped
+even when they live in a different folder, preventing duplicate chunks in the KB.
 """
 import argparse
+import hashlib
 import shutil
 import sqlite3
 import sys
@@ -48,6 +52,14 @@ _SKIP_FILENAMES = {"r598 - cash detail report.xlsx"}
 
 # ── SQLite tracker ────────────────────────────────────────────────────────────
 
+def _md5(path: Path) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _open_db(db_path: str) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
     con.execute("""
@@ -56,9 +68,15 @@ def _open_db(db_path: str) -> sqlite3.Connection:
             status      TEXT,
             chunks      INTEGER,
             ingested_at TEXT,
-            error       TEXT
+            error       TEXT,
+            md5_hash    TEXT
         )
     """)
+    # Add md5_hash column to existing DBs that pre-date this change
+    try:
+        con.execute("ALTER TABLE ingested ADD COLUMN md5_hash TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     con.commit()
     return con
 
@@ -70,15 +88,24 @@ def _is_done(con: sqlite3.Connection, path: str) -> bool:
     return row is not None and row[0] == "ok"
 
 
+def _is_duplicate(con: sqlite3.Connection, md5: str) -> str | None:
+    """Return the path of an already-ingested file with the same MD5, or None."""
+    row = con.execute(
+        "SELECT path FROM ingested WHERE md5_hash = ? AND status = 'ok' LIMIT 1", (md5,)
+    ).fetchone()
+    return row[0] if row else None
+
+
 def _record(con: sqlite3.Connection, path: str, status: str,
-            chunks: int = 0, error: str = "") -> None:
+            chunks: int = 0, error: str = "", md5: str = "") -> None:
     con.execute(
-        """INSERT INTO ingested (path, status, chunks, ingested_at, error)
-           VALUES (?, ?, ?, ?, ?)
+        """INSERT INTO ingested (path, status, chunks, ingested_at, error, md5_hash)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(path) DO UPDATE SET
                status=excluded.status, chunks=excluded.chunks,
-               ingested_at=excluded.ingested_at, error=excluded.error""",
-        (path, status, chunks, datetime.now().isoformat(timespec="seconds"), error),
+               ingested_at=excluded.ingested_at, error=excluded.error,
+               md5_hash=excluded.md5_hash""",
+        (path, status, chunks, datetime.now().isoformat(timespec="seconds"), error, md5),
     )
     con.commit()
 
@@ -275,7 +302,7 @@ def main() -> None:
     _log(f"=== Session start: {root} ({total} files) retry={args.retry_errors} ===")
 
     # ── Process ────────────────────────────────────────────────────────────────
-    ingested = skipped_done = skipped_empty = errors = 0
+    ingested = skipped_done = skipped_empty = skipped_dupe = errors = 0
 
     for idx, fpath in enumerate(all_files, 1):
         # Use path relative to root as the source label (preserves folder context)
@@ -287,11 +314,21 @@ def main() -> None:
 
         print(f"[{idx}/{total}] {source_label}", end="", flush=True)
 
-        # Skip already done
+        # Skip already done (same path)
         if _is_done(con, source_label):
             print("  -> already ingested, skipping")
             _log(f"SKIP (done) {source_label}")
             skipped_done += 1
+            continue
+
+        # MD5 dedup — skip files whose content already exists under a different path
+        file_md5 = _md5(fpath)
+        existing = _is_duplicate(con, file_md5)
+        if existing:
+            print(f"  -> duplicate of '{existing}', skipping")
+            _log(f"SKIP (dupe of {existing}) {source_label}")
+            _record(con, source_label, "duplicate", md5=file_md5)
+            skipped_dupe += 1
             continue
 
         try:
@@ -299,12 +336,12 @@ def main() -> None:
             if n == 0:
                 print("  -> empty, skipped")
                 _log(f"SKIP (empty) {source_label}")
-                _record(con, source_label, "empty")
+                _record(con, source_label, "empty", md5=file_md5)
                 skipped_empty += 1
             else:
                 print(f"  -> {n} chunks")
                 _log(f"OK {n} chunks  {source_label}")
-                _record(con, source_label, "ok", chunks=n)
+                _record(con, source_label, "ok", chunks=n, md5=file_md5)
                 ingested += 1
                 time.sleep(_INTER_FILE_DELAY)
 
@@ -325,7 +362,7 @@ def main() -> None:
     summary = (
         f"\nDone.\n"
         f"  Ingested : {ingested}\n"
-        f"  Skipped  : {skipped_done} already done, {skipped_empty} empty\n"
+        f"  Skipped  : {skipped_done} already done, {skipped_dupe} duplicates, {skipped_empty} empty\n"
         f"  Errors   : {errors}\n"
         f"  KB total : {total_kb} chunks\n"
     )
