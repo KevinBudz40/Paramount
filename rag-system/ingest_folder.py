@@ -39,6 +39,9 @@ _ALLOWED = {".pdf", ".docx", ".xlsx", ".csv", ".pptx", ".txt", ".md", ".json",
 # Directory name fragments that cause a whole subtree to be skipped
 _SKIP_DIR_FRAGMENTS = {"node_modules", ".git", "__pycache__", ".venv"}
 
+# Absolute path prefixes to exclude entirely (case-insensitive on Windows)
+_SKIP_PATH_PREFIXES: list[str] = []
+
 # Specific filenames (stem only, case-insensitive) to always skip
 _SKIP_FILENAMES = {"r598 - cash detail report.xlsx"}
 
@@ -107,6 +110,11 @@ def _walk(folder: Path, out: list[Path], temp_roots: list[Path]) -> None:
 
         # Skip subtrees we never want
         if any(frag in parts_lower for frag in _SKIP_DIR_FRAGMENTS):
+            continue
+
+        # Skip explicitly excluded path prefixes
+        entry_lower = str(entry).lower()
+        if any(entry_lower.startswith(prefix) for prefix in _SKIP_PATH_PREFIXES):
             continue
 
         suffix = entry.suffix.lower()
