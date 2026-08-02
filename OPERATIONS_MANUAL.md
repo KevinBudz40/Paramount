@@ -2,7 +2,7 @@
 
 **System:** Paramount Pictures Oracle Fusion Phase 4a Go-Live Intelligence RAG  
 **Maintained by:** Kevin Budz (OTC Track, Oracle Contractor)  
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-08-02  
 **Go-live date:** 2027-01-01 (Phase 4a — moved from 2026-10-01)
 
 ---
@@ -23,7 +23,8 @@
 12. [Backup & Recovery](#12-backup--recovery)
 13. [Flask Application — Routes Reference](#13-flask-application--routes-reference)
 14. [Critical Rules — What Not To Do](#14-critical-rules--what-not-to-do)
-15. [Troubleshooting](#15-troubleshooting)
+15. [DB Maintenance & Quality](#15-db-maintenance--quality)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -120,7 +121,8 @@ C:\ParamountRAG\
 C:\Paramount\
 ├── local_docs\                   ← PRIMARY drop folder for ad-hoc files (replaces todo/done)
 │   ├── Oracle_ERP_-_RAID.csv     ← Asana RAID export (re-export periodically)
-│   └── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export (re-export periodically)
+│   ├── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export (re-export periodically)
+│   └── Project_Roster.docx       ← Program participant roster (all teams, roles, emails)
 └── 10-1\
     └── meetings\                 ← Alternate meeting recordings location
 
@@ -155,7 +157,7 @@ Set `$env:CHROMA_DIR = "C:\GIT\chroma_db_new"` and `$env:PORT = "5001"` to run a
 
 The production vector database. Contains all ingested content as searchable chunks.
 
-- **Chunk count:** ~441K chunks (as of 2026-07-18); 1,369 tracked sources in source_log
+- **Chunk count:** ~25,500 chunks (as of 2026-08-02 after cleanup); tracked sources in source_log
 - **Collection name:** `rag_documents`
 - **Embedding model:** `all-MiniLM-L6-v2` (384 dimensions)
 - **Source log:** `C:\GIT\chroma_db\source_log.db` — SQLite tracking full paths, MD5 hashes, chunk counts for every ingested file. Powers dedup and change detection.
@@ -194,25 +196,40 @@ Open `http://localhost:5000` and use the **Scripts** panel in the sidebar:
 Live output streams into the log window below the buttons. Chunk count updates when done.
 
 ### Schedule:
-**No automated schedule.** All syncs are manual via the Scripts panel buttons above.
-(The "RAG All Syncs" Windows Task Scheduler job was removed 2026-07-18.)
+**No automated schedule.** All syncs are run ad hoc manually. Do NOT re-enable scheduled tasks without reviewing this section first.
 
-### Command line (alternative):
+**Windows Task Scheduler jobs (as of 2026-07-29):**
+| Task | State | Script | Note |
+|------|-------|--------|------|
+| ParamountRAG-Sync-8AM | **Disabled** | `sync_outlook.py --ingest` | Missing `--mail` flag — misconfigured |
+| ParamountRAG-Sync-Noon | **Disabled** | `sync_outlook.py --ingest` | Missing `--mail` flag — misconfigured |
+| RAG ChromaDB Backup | Enabled | `backup_rag.bat` | Nightly at 2:00 AM — keep enabled |
+
+If re-enabling the sync tasks, fix the Arguments to include `--mail`: `sync_outlook.py --mail --ingest`
+
+> Previously "RAG All Syncs" Task Scheduler job was removed 2026-07-18.
+
+### Command line (ad hoc):
 ```
 cd C:\ParamountRAG\scripts
 
-# Incremental (daily) — USE THIS by default
-python sync_outlook.py --mail
+# Email — incremental (daily) — USE THIS by default
+python sync_outlook.py --mail --ingest
 
-# Then ingest via Flask:
-# POST http://127.0.0.1:5000/api/ingest/email-json
-# POST http://127.0.0.1:5000/api/ingest/attachments
+# Calendar items (meetings) — incremental
+python sync_outlook.py --calendar --ingest
+
+# Email + Calendar together
+python sync_outlook.py --all --ingest
+
+# Targeted re-sync for a specific date window (e.g. last 3 days):
+python sync_outlook.py --mail --since 2026-07-20T00:00:00 --ingest
 
 # Full historical re-sync — only when resetting or recovering
-python sync_outlook.py --mail --full
+python sync_outlook.py --mail --full --ingest
 ```
 
-> **IMPORTANT:** Do NOT use `--full` for routine syncs. It re-exports all 600+ emails every time, making the ingest re-process everything unnecessarily. Use `--mail` (incremental) by default.
+> **IMPORTANT:** Do NOT use `--full` for routine syncs. It re-exports all 600+ emails every time. Use `--mail` (incremental) by default. Use `--since <ISO datetime>` to target a specific window without full re-sync.
 
 ### Key files:
 | File | Path | Purpose |
@@ -264,15 +281,18 @@ Simply copy files into `C:\Paramount\local_docs` and click **Ingest Todo Folder*
 No need to manage todo/done subfolders — the hash tracker handles dedup.
 
 ### Skip list management:
-Maintained in `source_log.db` (226 entries as of 2026-07-18). Add entries via:
+Maintained in `source_log.db` (300+ entries as of 2026-08-02 — includes integration tx files,
+data dump globs, payroll files, whisper logs, and large data extracts). Add entries via:
 ```python
 from source_log import add_skip
 add_skip("Archive", "folder", "Skip archive folders")
 add_skip("filename.xlsx", "filename", "Raw data dump")
 ```
 
-### MAX_FILE_MB = 5
-Files over 5MB are skipped silently (re-evaluated each run, not added to skip list).
+### MAX_FILE_MB = 30
+Files over 30MB are skipped silently (re-evaluated each run, not added to skip list).
+Raised from 5MB on 2026-08-02 — large design docs (docx/pdf/pptx with embedded images) are
+legitimately big. Data dumps (xlsx/csv) are controlled via the skip list instead.
 
 ---
 
@@ -650,7 +670,60 @@ ChromaDB is NOT in git (too large). Recovery requires:
 
 ---
 
-## 15. Troubleshooting
+## 15. DB Maintenance & Quality
+
+### Chunk quality check:
+```
+cd C:\ParamountRAG\scripts
+python quality_check.py
+```
+Uses ChromaDB PersistentClient (not raw SQLite) — respects deletions. Reports chunk count,
+doc type breakdown, label coverage, source type breakdown, top sources by chunk count,
+and ingestion recency. Run after any bulk delete or ingest to verify counts.
+
+### Deleting a source:
+```python
+import requests, urllib.parse
+sk = "Filename.xlsx"
+requests.delete(f"http://127.0.0.1:5000/api/sources/{urllib.parse.quote(sk, safe='')}", timeout=120)
+```
+Then remove from source_log:
+```python
+from source_log import remove
+remove(sk)
+```
+
+### Adding to skip list (prevent future re-ingest):
+```python
+from source_log import add_skip
+add_skip("PATTERN_*", match_type="glob", note="reason")
+add_skip("exact_filename.xlsx", match_type="filename", note="reason")
+```
+Valid match_type values: `folder`, `filename`, `glob`, `path`
+
+### Workstream backfill:
+**Script:** `C:\ParamountRAG\scripts\backfill_workstream.py`
+Must run with Flask DOWN. Tags ChromaDB chunks with workstream field based on filename/path rules.
+```
+# Dry-run (default):
+python backfill_workstream.py
+
+# Apply:
+python backfill_workstream.py --apply
+```
+As of 2026-08-02: 18,824 / 25,539 chunks tagged (73.7%). Rules cover: Meeting, Email, GL,
+Security, EPM, Testing, Data Migration, Localization, Integrations, O2C, HCM, DTC, P2P, PMO.
+Remaining 6,715 chunks unmatched — expand rules in `derive_workstream()` as new file patterns emerge.
+
+### ChromaDB backup (manual):
+```powershell
+& "C:\ParamountRAG\scripts\backup_chroma.ps1"
+```
+Backs up to `Z:\ChromaBackups`. **Always run before bulk deletes.**
+
+---
+
+## 16. Troubleshooting
 
 ### Dashboard shows 0 chunks / "DATABASE OFFLINE"
 - Flask is not running → `cd C:\GIT\rag-system && python app.py`
