@@ -122,7 +122,7 @@ def generate_answer(question: str, chunks: list[dict], history: list[dict] | Non
 
     with client.messages.stream(
         model=_MODEL,
-        max_tokens=2048,
+        max_tokens=4096,  # increased from 2048 — responses were truncating mid-sentence
         thinking={"type": "adaptive"},
         system=_build_system(),
         messages=messages,
