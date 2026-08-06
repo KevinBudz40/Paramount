@@ -120,12 +120,22 @@ def generate_answer(question: str, chunks: list[dict], history: list[dict] | Non
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
 
-    with client.messages.stream(
+    # Sanitize: drop any history turns with empty content (can cause 400s)
+    messages = [m for m in messages if m.get("content", "").strip()]
+
+    # Adaptive thinking requires thinking blocks be present in assistant history turns,
+    # which the frontend doesn't preserve. Only use thinking on fresh (no-history) queries.
+    use_thinking = len(messages) == 1
+
+    kwargs = dict(
         model=_MODEL,
         max_tokens=4096,  # increased from 2048 — responses were truncating mid-sentence
-        thinking={"type": "adaptive"},
         system=_build_system(),
         messages=messages,
-    ) as stream:
+    )
+    if use_thinking:
+        kwargs["thinking"] = {"type": "adaptive"}
+
+    with client.messages.stream(**kwargs) as stream:
         for text in stream.text_stream:
             yield text
