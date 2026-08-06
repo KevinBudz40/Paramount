@@ -2,7 +2,7 @@
 
 **System:** Paramount Pictures Oracle Fusion Phase 4a Go-Live Intelligence RAG  
 **Maintained by:** Kevin Budz (OTC Track, Oracle Contractor)  
-**Last updated:** 2026-08-02  
+**Last updated:** 2026-08-06  
 **Go-live date:** 2027-01-01 (Phase 4a — moved from 2026-10-01)
 
 ---
@@ -25,6 +25,7 @@
 14. [Critical Rules — What Not To Do](#14-critical-rules--what-not-to-do)
 15. [DB Maintenance & Quality](#15-db-maintenance--quality)
 16. [Troubleshooting](#16-troubleshooting)
+17. [Kevin's Task Tracker — Kevin_Todo.xlsx](#17-kevins-task-tracker--kevin_todoxlsx)
 
 ---
 
@@ -37,7 +38,7 @@ Claude Opus as the AI backbone.
 
 **Technology stack:**
 - Flask (Python) — web server, API, dashboard
-- ChromaDB — vector store (SQLite-backed, ~434K chunks)
+- ChromaDB — vector store (SQLite-backed, ~484K chunks as of 2026-08-06)
 - SentenceTransformers `all-MiniLM-L6-v2` — embedding model
 - Claude Opus 4.8 (`claude-opus-4-8`) — answer generation
 - SQLite `dashboard.db` — doc requests and deliverables tracking (separate from ChromaDB)
@@ -82,7 +83,12 @@ C:\GIT\
 │   │   ├── dashboard.css         ← Dashboard styles
 │   │   └── js\app.js             ← Chat UI JavaScript
 │   └── uploads\                  ← Staging area for uploaded files (transient)
-├── backup_rag.bat                ← Manual/nightly backup script to OneDrive
+├── backup_rag.bat                ← Nightly backup script (Task Scheduler)
+├── backup_chroma.ps1             ← On-demand ChromaDB backup to OneDrive (timestamped)
+├── scan_todos.py                 ← Kevin_Todo.xlsx dedup + append layer for automated scan
+├── add_todo.py                   ← Manually append a single task to Kevin_Todo.xlsx
+├── todo_cursor.json              ← Last-scan timestamps per source (tactiq/email/slack)
+├── todo_scan_output.json         ← Intermediate: scan candidates written here before dedup
 ├── CHANGELOG.md                  ← Session-by-session change log
 └── OPERATIONS_MANUAL.md          ← This file
 
@@ -122,7 +128,8 @@ C:\Paramount\
 ├── local_docs\                   ← PRIMARY drop folder for ad-hoc files (replaces todo/done)
 │   ├── Oracle_ERP_-_RAID.csv     ← Asana RAID export (re-export periodically)
 │   ├── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export (re-export periodically)
-│   └── Project_Roster.docx       ← Program participant roster (all teams, roles, emails)
+│   ├── Project_Roster.docx       ← Program participant roster (all teams, roles, emails)
+│   └── Kevin_Todo.xlsx           ← Kevin's personal task tracker (see §17)
 └── 10-1\
     └── meetings\                 ← Alternate meeting recordings location
 
@@ -157,7 +164,7 @@ Set `$env:CHROMA_DIR = "C:\GIT\chroma_db_new"` and `$env:PORT = "5001"` to run a
 
 The production vector database. Contains all ingested content as searchable chunks.
 
-- **Chunk count:** ~25,500 chunks (as of 2026-08-02 after cleanup); tracked sources in source_log
+- **Chunk count:** ~484K chunks (as of 2026-08-06); tracked sources in source_log
 - **Collection name:** `rag_documents`
 - **Embedding model:** `all-MiniLM-L6-v2` (384 dimensions)
 - **Source log:** `C:\GIT\chroma_db\source_log.db` — SQLite tracking full paths, MD5 hashes, chunk counts for every ingested file. Powers dedup and change detection.
@@ -177,6 +184,9 @@ Separate SQLite DB for the dashboard tracking panels. Independent of ChromaDB.
 
 Uses Claude Opus 4.8 (`claude-opus-4-8`) via Anthropic API. Requires
 `ANTHROPIC_API_KEY` in `C:\GIT\rag-system\.env`.
+
+`max_tokens=4096` (increased from 2048 on 2026-08-03 — responses were truncating mid-sentence).
+Do not lower this without testing on long queries first.
 
 ---
 
@@ -542,12 +552,23 @@ python scripts\query_to_file.py "Who is the backup for Prem James?" --heading "P
 
 ## 12. Backup & Recovery
 
+### On-demand backup (preferred):
+
+**Script:** `C:\GIT\backup_chroma.ps1`  
+**Destination:** `C:\Users\kevin\OneDrive\Backups\chroma_db_backup_YYYYMMDD_HHMMSS\` (timestamped — preserves each backup independently)
+
+```powershell
+powershell -File C:\GIT\backup_chroma.ps1
+```
+
+Run this **before any bulk ingest, delete, or schema change.** Each call creates a new timestamped folder — no overwrites.
+
 ### Nightly automated backup:
 
 **Script:** `C:\GIT\backup_rag.bat`  
 **Schedule:** Every night at 2:00 AM (Windows Task Scheduler — "RAG ChromaDB Backup")  
 **Destination:**
-- ChromaDB → `C:\Users\kevin\OneDrive\Backups\chroma_db\`
+- ChromaDB → `C:\Users\kevin\OneDrive\Backups\chroma_db\` (rolling mirror — overwrites previous)
 - dashboard.db → `C:\Users\kevin\OneDrive\Backups\dashboard_db\`
 
 OneDrive then syncs to cloud automatically.
@@ -555,10 +576,6 @@ OneDrive then syncs to cloud automatically.
 **Run manually anytime:**
 ```
 C:\GIT\backup_rag.bat
-```
-Or via PowerShell:
-```
-robocopy "C:\GIT\chroma_db" "C:\Users\kevin\OneDrive\Backups\chroma_db" /MIR /Z
 ```
 
 ### Git recovery points:
@@ -750,6 +767,54 @@ Backs up to `Z:\ChromaBackups`. **Always run before bulk deletes.**
 - Symptom: health checks pass but RAG queries return wrong/stale results
 - Cause: a script created `C:\GIT\rag-system\chroma_db` instead of using production
 - Fix: always pass `persist_dir=r"C:\GIT\chroma_db"` explicitly in all scripts
+
+---
+
+---
+
+## 17. Kevin's Task Tracker — Kevin_Todo.xlsx
+
+**File:** `C:\Paramount\local_docs\Kevin_Todo.xlsx`
+
+Personal task tracker for Kevin's action items across all workstreams. Always close Excel before running any script that writes to it.
+
+### Column layout (A–G)
+
+| Col | Field | Notes |
+|-----|-------|-------|
+| A | Status | Open / In Progress / Done / Blocked — color-coded |
+| B | Task | Wrap text |
+| C | Workstream | AR / Integrations, AR / Billing, AR / Tax, GL / R2R, EMEA Localizations, Studio Billing / AR, Testing / Go-Live, General |
+| D | Source | "Meeting: Title YYYY-MM-DD" or "Email: subject + date" or "Slack: context + date" |
+| E | Date Added | YYYY-MM-DD |
+| F | Due Date | YYYY-MM-DD or blank |
+| G | Notes | Brief context |
+
+Status cell fill colors: Open=FFD966 (amber), In Progress=9DC3E6 (blue), Done=A9D18E (green), Blocked=FF7373 (red).
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `C:\GIT\scan_todos.py` | Dedup + append layer for automated scan; `--input tasks.json`, `--dry-run`, `--print-existing`, `--update-cursor "source:ISO"` |
+| `C:\GIT\add_todo.py` | Manually append a single task (interactive) |
+| `C:\GIT\todo_cursor.json` | Last-scan timestamps (tactiq / email / slack) |
+| `C:\GIT\todo_scan_output.json` | Intermediate candidates file (Claude writes, scan_todos.py consumes) |
+
+### "Scan my todos" workflow (CLAUDE.md-driven)
+
+Triggered by saying **"scan my todos"** to Claude Code. Claude:
+
+1. Loads cursor from `todo_cursor.json` (default: 7 days ago if no cursor)
+2. Fetches Tactiq meetings Kevin attended since cursor via MCP (`list_recent_meetings` + `get_meeting`)
+3. Reads `C:\ParamountRAG\outlook\email\emails.json` for emails since cursor
+4. Searches Slack with `to:<@U0BA98BHRSQ>` — **do NOT use generic "Kevin"** (returns Kevin Gausman baseball noise)
+5. Extracts Kevin-specific action items inline; writes to `todo_scan_output.json`
+6. Runs `python C:\GIT\scan_todos.py --input C:\GIT\todo_scan_output.json` (55% word-overlap dedup)
+7. Updates cursor per source via `--update-cursor "source:ISO_TIMESTAMP"`
+8. Reports tasks found per source, net-new count, and list of new tasks
+
+Task count history: 35 (2026-08-03 initial build) → 40 (2026-08-03 after first automated scan).
 
 ---
 
