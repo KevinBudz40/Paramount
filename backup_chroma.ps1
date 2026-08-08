@@ -1,8 +1,9 @@
-# backup_chroma.ps1 — On-demand ChromaDB backup to OneDrive
+# backup_chroma.ps1 — On-demand ChromaDB backup to Z:\ChromaBackups
 # Usage: powershell -File C:\GIT\backup_chroma.ps1
+# [2026-08-07] Fixed dest: was OneDrive\Backups (wrong), must always be Z:\ChromaBackups
 
 $src  = "C:\GIT\chroma_db"
-$dest = "C:\Users\kevin\OneDrive\Backups\chroma_db_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+$dest = "Z:\ChromaBackups\chroma_db_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 
 Write-Host "Backing up $src -> $dest"
 Copy-Item -Path $src -Destination $dest -Recurse
