@@ -331,8 +331,12 @@ def remove_source(source_name):
 _ID_PATTERN = re.compile(r'\b(INT\d+|RICEFW[-\s]?\d+|RICE[-\s]?\d+)\b', re.IGNORECASE)
 
 
-def _keyword_chunks(question: str, persist_dir: str, max_per_id: int = 3) -> list[dict]:
-    """Return chunks that exactly contain any INT### / RICEFW-### ids found in the question."""
+def _keyword_chunks(question: str, persist_dir: str, max_per_id: int = 5) -> list[dict]:
+    """Return chunks that contain any INT### / RICEFW-### ids found in the question.
+
+    Uses ChromaDB's $contains operator instead of a full table scan, so it runs
+    in milliseconds regardless of collection size.
+    """
     ids = list({m.group(0).upper().replace(" ", "-") for m in _ID_PATTERN.finditer(question)})
     if not ids:
         return []
@@ -340,35 +344,23 @@ def _keyword_chunks(question: str, persist_dir: str, max_per_id: int = 3) -> lis
     collection = _get_collection(persist_dir)
     hits: list[dict] = []
     seen_ids: set[str] = set()
-    batch = 2000
-    offset = 0
-    while True:
-        results = collection.get(include=["documents", "metadatas"], limit=batch, offset=offset)
-        if not results["ids"]:
-            break
+    for tid in ids:
+        try:
+            results = collection.get(
+                where_document={"$contains": tid},
+                include=["documents", "metadatas"],
+                limit=max_per_id,
+            )
+        except Exception:
+            continue
         for doc, meta, cid in zip(results["documents"], results["metadatas"], results["ids"]):
-            for tid in ids:
-                if tid in doc.upper() and cid not in seen_ids:
-                    item = deserialize_metadata(meta)
-                    item["text"] = doc
-                    item["score"] = 1.0
-                    hits.append(item)
-                    seen_ids.add(cid)
-                    break
-        if len(results["ids"]) < batch:
-            break
-        offset += batch
-    # Cap per id to avoid flooding context
-    counts: dict[str, int] = {}
-    capped = []
-    for h in hits:
-        for tid in ids:
-            if tid in h["text"].upper():
-                counts[tid] = counts.get(tid, 0) + 1
-                if counts[tid] <= max_per_id:
-                    capped.append(h)
-                break
-    return capped
+            if cid not in seen_ids:
+                item = deserialize_metadata(meta)
+                item["text"] = doc
+                item["score"] = 1.0
+                hits.append(item)
+                seen_ids.add(cid)
+    return hits
 
 
 @app.route("/open")
@@ -927,4 +919,4 @@ if __name__ == "__main__":
     print("  Pre-loading ChromaDB...")
     _preload_count = doc_count(CHROMA_DIR)
     print(f"  Ready — {_preload_count:,} chunks indexed.\n")
-    app.run(debug=True, port=port, threaded=True, use_reloader=False)
+    app.run(debug=False, port=port, threaded=True, use_reloader=False)
