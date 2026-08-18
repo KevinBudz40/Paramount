@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from rag.store import add_chunks, ingested_sources
 
-CSV_PATH = r"C:\Paramount\todo\Oracle_ERP_-_RICEFW_Master (3).csv"
+CSV_PATH = r"C:\Paramount\local_docs\Oracle_ERP_-_RICEFW_Master.csv"  # [2026-08-18] updated path — old file gone from todo folder
 SOURCE_NAME = "Asana_RICEFW_Master.csv"
 
 FIELDS = [
