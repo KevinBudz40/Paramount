@@ -121,16 +121,17 @@ def query(
     vector = model.encode([question], show_progress_bar=False)[0].tolist()
     qf = _build_filter(filters or {})
 
-    hits = client.search(
+    # [2026-08-23] qdrant-client 1.7+ replaced search() with query_points()
+    result = client.query_points(
         collection_name=_COLLECTION,
-        query_vector=vector,
+        query=vector,
         limit=n_results * 5,
         query_filter=qf,
         with_payload=True,
     )
 
     items = []
-    for hit in hits:
+    for hit in result.points:
         payload = hit.payload or {}
         item = deserialize_metadata(payload)
         item["text"]  = payload.get("text", "")
@@ -176,14 +177,14 @@ def hyde_query(
 
     seen: dict[str, dict] = {}
     for vec in vectors:
-        hits = client.search(
+        result = client.query_points(
             collection_name=_COLLECTION,
-            query_vector=vec,
+            query=vec,
             limit=candidate_n,
             query_filter=qf,
             with_payload=True,
         )
-        for hit in hits:
+        for hit in result.points:
             payload = hit.payload or {}
             item = deserialize_metadata(payload)
             item["text"]  = payload.get("text", "")
