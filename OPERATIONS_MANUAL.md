@@ -2,7 +2,7 @@
 
 **System:** Paramount Pictures Oracle Fusion Phase 4a Go-Live Intelligence RAG  
 **Maintained by:** Kevin Budz (OTC Track, Oracle Contractor)  
-**Last updated:** 2026-08-06  
+**Last updated:** 2026-08-23  
 **Go-live date:** 2027-01-01 (Phase 4a — moved from 2026-10-01)
 
 ---
@@ -13,19 +13,18 @@
 2. [Directory Map](#2-directory-map)
 3. [Core Components](#3-core-components)
 4. [Daily Operations — Email Sync & Ingest](#4-daily-operations--email-sync--ingest)
-5. [Document Ingest — Batched (Primary)](#5-document-ingest--batched-primary)
+5. [Document Ingest — Primary](#5-document-ingest--primary)
 6. [Meeting Transcription & Ingest](#6-meeting-transcription--ingest)
 7. [Labeling Chunks](#7-labeling-chunks)
 8. [Agentic RAG (Streamlit UI)](#8-agentic-rag-streamlit-ui)
-9. [Shadow DB (chroma_db_new)](#9-shadow-db-chroma_db_new)
-10. [Dashboard — Doc Requests & Deliverables](#10-dashboard--doc-requests--deliverables)
-11. [Audit & Health Checks](#11-audit--health-checks)
-12. [Backup & Recovery](#12-backup--recovery)
-13. [Flask Application — Routes Reference](#13-flask-application--routes-reference)
-14. [Critical Rules — What Not To Do](#14-critical-rules--what-not-to-do)
-15. [DB Maintenance & Quality](#15-db-maintenance--quality)
-16. [Troubleshooting](#16-troubleshooting)
-17. [Kevin's Task Tracker — Kevin_Todo.xlsx](#17-kevins-task-tracker--kevin_todoxlsx)
+9. [Dashboard — Doc Requests & Deliverables](#9-dashboard--doc-requests--deliverables)
+10. [Audit & Health Checks](#10-audit--health-checks)
+11. [Backup & Recovery](#11-backup--recovery)
+12. [Flask Application — Routes Reference](#12-flask-application--routes-reference)
+13. [Critical Rules — What Not To Do](#13-critical-rules--what-not-to-do)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Kevin's Task Tracker — Kevin_Todo.xlsx](#15-kevins-task-tracker--kevin_todoxlsx)
+16. [Revert to ChromaDB](#16-revert-to-chromadb)
 
 ---
 
@@ -37,13 +36,19 @@ natural-language questions about the Paramount Oracle Fusion project using
 Claude Opus as the AI backbone.
 
 **Technology stack:**
-- Flask (Python) — web server, API, dashboard
-- ChromaDB — vector store (SQLite-backed, ~484K chunks as of 2026-08-06)
-- SentenceTransformers `all-MiniLM-L6-v2` — embedding model
+- **Qdrant** (embedded mode) — vector store (migrated from ChromaDB 2026-08-22)
+- SentenceTransformers `all-MiniLM-L6-v2` — embedding model (384 dimensions)
 - Claude Opus 4.8 (`claude-opus-4-8`) — answer generation
-- SQLite `dashboard.db` — doc requests and deliverables tracking (separate from ChromaDB)
+- Streamlit — Agentic RAG UI (`localhost:8501`)
+- Flask (Python) — dashboard and `/open` file links only (`localhost:5000`)
+- SQLite `dashboard.db` — doc requests and deliverables tracking (separate from Qdrant)
 
-**Access:** `http://localhost:5000` (must be running on Kevin's local machine)
+**Why Qdrant:** ChromaDB's HNSW compaction crashed on large batch upserts, requiring
+multiple full rebuilds. Qdrant embedded mode has no such compaction process.
+
+**Qdrant embedded lock:** Only ONE process can open `C:\GIT\qdrant_db` at a time.
+Streamlit (ARAG) and Flask cannot run simultaneously. Ingest scripts must not run
+while either is open. Stop whichever is running before ingesting or labeling.
 
 ---
 
@@ -51,195 +56,144 @@ Claude Opus as the AI backbone.
 
 ```
 C:\GIT\
-├── chroma_db\                    ← PRODUCTION vector database (never delete)
-│   └── chroma.sqlite3            ← 8.9GB SQLite — all chunks + embeddings
+├── qdrant_db\                    ← PRODUCTION vector database (never delete)
+│   └── source_log.db             ← SQLite tracking ingested files, skip list
+├── chroma_db\                    ← PRESERVED revert path (old ChromaDB — do NOT delete)
 ├── dashboard.db                  ← Dashboard tracking DB (doc requests, deliverables)
-├── rag-system\                   ← Flask application root
-│   ├── app.py                    ← Main Flask app — all routes
+├── rag-system-qdrant\            ← Flask application root (ACTIVE)
+│   ├── app.py                    ← Main Flask app — dashboard + /open route
 │   ├── dashboard_db.py           ← Dashboard DB schema, CRUD, staleness logic
 │   ├── sync_from_asana.py        ← Seeds dashboard.db from RICEFW CSV
 │   ├── transcribe_backlog.py     ← Batch Zoom transcription + ingest
 │   ├── transcribe_paramount_meetings.py  ← Alternative transcription script
 │   ├── ingest_folder.py          ← Ingest a local folder of documents
-│   ├── ingest_email.py           ← (Legacy) Graph API email ingest — DO NOT USE
-│   ├── ingest_email_com.py       ← (Legacy) COM email ingest — use sync_outlook.py instead
-│   ├── ingest_asana_raid.py      ← Ingest RAID CSV into ChromaDB
-│   ├── ingest_asana_ricefw.py    ← Ingest RICEFW CSV into ChromaDB
 │   ├── rag\
-│   │   ├── store.py              ← ChromaDB wrapper (add_chunks, query, recent_items)
+│   │   ├── store.py              ← Qdrant wrapper (add_chunks, query, close_client)
 │   │   ├── chunker.py            ← Document chunking logic
 │   │   ├── generator.py          ← Claude answer generation (model: claude-opus-4-8)
 │   │   ├── email_json.py         ← Email JSON parser (HTML stripping, skip rules)
-│   │   ├── schema.py             ← Metadata schema (WORKSTREAMS, DOC_TYPES, etc.)
-│   │   └── graph\                ← Microsoft Graph API (email/calendar via OAuth)
-│   │       ├── auth.py           ← OAuth2 token management
-│   │       ├── mail.py           ← Graph mail fetcher
-│   │       ├── calendar.py       ← Graph calendar fetcher
-│   │       └── sharepoint.py     ← SharePoint document fetcher
-│   ├── templates\
-│   │   ├── dashboard.html        ← Phase 5 war-room dashboard
-│   │   └── index.html            ← Main RAG chat UI
-│   ├── static\
-│   │   ├── dashboard.css         ← Dashboard styles
-│   │   └── js\app.js             ← Chat UI JavaScript
-│   └── uploads\                  ← Staging area for uploaded files (transient)
-├── backup_rag.bat                ← Nightly backup script (Task Scheduler)
-├── backup_chroma.ps1             ← On-demand ChromaDB backup to OneDrive (timestamped)
-├── scan_todos.py                 ← Kevin_Todo.xlsx dedup + append layer for automated scan
+│   │   └── schema.py             ← Metadata schema (WORKSTREAMS, DOC_TYPES, etc.)
+│   └── templates\ / static\      ← UI assets
+├── rag-system\                   ← PRESERVED revert path (old ChromaDB Flask app)
+├── ingest_phase4a_4b_local.py    ← PRIMARY document ingest (direct to Qdrant, no Flask)
+├── ingest_emails_batched.py      ← PRIMARY email ingest (direct to Qdrant, no Flask)
+├── prep_qdrant_db.py             ← One-time: create qdrant_db with skip_list from chroma_db
+├── scan_todos.py                 ← Kevin_Todo.xlsx dedup + append layer
 ├── add_todo.py                   ← Manually append a single task to Kevin_Todo.xlsx
-├── todo_cursor.json              ← Last-scan timestamps per source (tactiq/email/slack)
-├── todo_scan_output.json         ← Intermediate: scan candidates written here before dedup
+├── todo_cursor.json              ← Last-scan timestamps per source
+├── todo_scan_output.json         ← Intermediate scan candidates
 ├── CHANGELOG.md                  ← Session-by-session change log
 └── OPERATIONS_MANUAL.md          ← This file
 
 C:\ParamountRAG\
 ├── scripts\
 │   ├── sync_outlook.py           ← PRIMARY email + calendar sync (COM/Outlook)
-│   ├── ingest_todo.py            ← PRIMARY file ingest (watches local_docs + SharePoint)
-│   ├── sync_tactiq.py            ← Tactiq meeting summary sync (Claude Code session only)
-│   ├── ingest_tactiq.py          ← ingest_meeting() helper called by sync_tactiq.py
-│   ├── label_chunks.py           ← Backfill doc_type labels (run with Flask DOWN)
-│   ├── source_log.py             ← source_log.db helper (upsert, lookup, skip list)
+│   ├── agent.py                  ← Agentic RAG orchestrator (Qdrant, Claude tool-use loop)
+│   ├── app_agent.py              ← Streamlit UI for agentic RAG
+│   ├── agent_query_to_file.py    ← CLI: run agent → append answer to daily .md file
+│   ├── ingest_batched.py         ← Legacy batch ingest (superseded by ingest_phase4a_4b_local.py)
+│   ├── sync_tactiq.py            ← Tactiq meeting summary sync (subprocess broken — use MCP instead)
+│   ├── ingest_tactiq.py          ← ingest_meeting() helper for Tactiq
+│   ├── label_chunks.py           ← Backfill doc_type labels (Qdrant scroll+set_payload)
+│   ├── source_log.py             ← source_log.db helper (DB: C:\GIT\qdrant_db\source_log.db)
 │   ├── audit_chroma.py           ← Full KB audit report
-│   ├── reconcile.py              ← Compare emails.json vs ChromaDB
+│   ├── reconcile.py              ← Compare emails.json vs vector store
 │   ├── query_to_file.py          ← CLI: query RAG → write answer to file
 │   ├── transcribe_mp4.py         ← Whisper MP4 → VTT transcription
-│   ├── ingest_vtt.py             ← Ingest a VTT transcript into ChromaDB
-│   ├── ingest_folder.py          ← Ingest a local folder (alt version)
-│   ├── export_outlook_v7_com.py  ← Outlook COM exporter (called by sync_outlook.py)
-│   ├── export_outlook_meetings_v1.py  ← Meeting export variant
+│   ├── ingest_vtt.py             ← Ingest a VTT transcript
 │   └── check.py                  ← Quick health check
 ├── outlook\
 │   ├── email\
 │   │   ├── emails.json           ← Exported email archive (input to ingest)
-│   │   ├── last_sync.txt         ← Incremental sync cursor (delete for full re-sync)
-│   │   └── sharepoint_links.html ← SharePoint links extracted from emails
-│   ├── calendar\
-│   │   ├── meetings.json         ← Exported calendar/meeting archive
-│   │   └── last_sync.txt         ← Calendar sync cursor
-│   └── attachments\              ← Email attachment files
-├── meetings\                     ← MP4 recordings + VTT transcripts
-└── logs\
-    ├── chroma_audit.txt          ← Output of audit_chroma.py
-    ├── reconciliation_report.txt ← Output of reconcile.py
-    └── transcribe_log.txt        ← Output of transcribe_mp4.py
+│   │   └── last_sync.txt         ← Incremental sync cursor
+│   └── calendar\
+│       └── meetings.json         ← Exported calendar/meeting archive
+└── meetings\                     ← MP4 recordings + VTT transcripts
 
 C:\Paramount\
-├── local_docs\                   ← PRIMARY drop folder for ad-hoc files (replaces todo/done)
+├── local_docs\                   ← PRIMARY drop folder for ad-hoc files
 │   ├── Oracle_ERP_-_RAID.csv     ← Asana RAID export (re-export periodically)
-│   ├── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export (re-export periodically)
-│   ├── Project_Roster.docx       ← Program participant roster (all teams, roles, emails)
-│   └── Kevin_Todo.xlsx           ← Kevin's personal task tracker (see §17)
-└── 10-1\
-    └── meetings\                 ← Alternate meeting recordings location
-
-C:\Users\kevin\OneDrive\Backups\
-├── chroma_db\                    ← Nightly mirror of production ChromaDB
-└── dashboard_db\                 ← Nightly mirror of dashboard.db
+│   ├── Oracle_ERP_-_RICEFW_Master.csv  ← Asana RICEFW export
+│   ├── Project_Roster.docx       ← Program participant roster
+│   └── Kevin_Todo.xlsx           ← Kevin's personal task tracker (see §15)
+└── ARAG_DOCS\                    ← Agentic RAG output — daily briefing .md files
 ```
 
 ---
 
 ## 3. Core Components
 
-### 3.1 Flask Application (`C:\GIT\rag-system\app.py`)
+### 3.1 Qdrant Vector Store (`C:\GIT\qdrant_db\`)
 
-The central server. Must be running for anything to work.
+The production vector database. **~36,800 chunks** as of 2026-08-23.
+
+- **Collection name:** `rag_documents`
+- **Embedding model:** `all-MiniLM-L6-v2` (384 dimensions)
+- **Source log:** `C:\GIT\qdrant_db\source_log.db` — SQLite tracking full paths, MD5 hashes, chunk counts. Powers dedup and change detection.
+- **Embedded lock:** Only one process at a time. Stop Flask OR Streamlit before ingest.
+- **NEVER** delete `qdrant_db\` without a confirmed backup on Z:\
+
+### 3.2 Qdrant store wrapper (`C:\GIT\rag-system-qdrant\rag\store.py`)
+
+Key functions:
+| Function | Purpose |
+|----------|---------|
+| `add_chunks(chunks, doc_meta, persist_dir)` | Embed + upsert chunks into Qdrant |
+| `query(query, n_results, persist_dir)` | Semantic vector search |
+| `keyword_search(term, max_results, persist_dir)` | Full-text scan via scroll |
+| `close_client(persist_dir)` | Explicitly release Qdrant file lock |
+| `delete_source(source_name, persist_dir)` | Remove chunks by source key |
+
+**`close_client()` must be called before any subprocess that opens Qdrant** (e.g. label_chunks). The `_clients` dict caches the client for the process lifetime — without explicit close, the lock is never released.
+
+### 3.3 Flask Application (`C:\GIT\rag-system-qdrant\app.py`)
+
+**Flask is NOT needed for ingest or agentic RAG queries.** It serves:
+- `/dashboard` — doc requests & deliverables tracking UI
+- `/open?path=...` — open a local file in Windows Explorer
 
 **Start:**
 ```
-cd C:\GIT\rag-system
+cd C:\GIT\rag-system-qdrant
 python app.py
 ```
+**Runs on:** `http://localhost:5000`
 
-**Runs on:** `http://localhost:5000`  
-**Debug mode:** ON (auto-reloads on file save — see Critical Rules)  
-**ChromaDB path:** Defaults to `C:\GIT\chroma_db`, overridable via env var:
-```python
-CHROMA_DIR = os.environ.get("CHROMA_DIR", str(_HERE.parent / "chroma_db"))
-```
-Set `$env:CHROMA_DIR = "C:\GIT\chroma_db_new"` and `$env:PORT = "5001"` to run a shadow instance (see §9).
+> Flask and Streamlit (ARAG) cannot run at the same time — both hold the Qdrant lock.
 
-### 3.2 ChromaDB (`C:\GIT\chroma_db\`)
+### 3.4 Agentic RAG (`C:\ParamountRAG\scripts\agent.py`)
 
-The production vector database. Contains all ingested content as searchable chunks.
+Claude Opus 4.8 iterative search agent over Qdrant. Read-only — safe to run without Flask.
+Scripts: `agent.py` (orchestrator) + `app_agent.py` (Streamlit UI) + `agent_query_to_file.py` (CLI).
 
-- **Chunk count:** ~484K chunks (as of 2026-08-06); tracked sources in source_log
-- **Collection name:** `rag_documents`
-- **Embedding model:** `all-MiniLM-L6-v2` (384 dimensions)
-- **Source log:** `C:\GIT\chroma_db\source_log.db` — SQLite tracking full paths, MD5 hashes, chunk counts for every ingested file. Powers dedup and change detection.
-- **NEVER** run scripts against this DB without explicitly pointing at `C:\GIT\chroma_db`
+### 3.5 Dashboard Database (`C:\GIT\dashboard.db`)
 
-### 3.3 Dashboard Database (`C:\GIT\dashboard.db`)
+Separate SQLite DB for dashboard tracking panels. Independent of Qdrant.
+**Safe to recreate:** `del C:\GIT\dashboard.db` then `python sync_from_asana.py`
 
-Separate SQLite DB for the dashboard tracking panels. Independent of ChromaDB.
-
-**Tables:**
-- `doc_requests` — FDD/TDD documentation requests blocking design sessions
-- `deliverables` — O2C/AR team deliverables with status and blockers
-
-**Safe to recreate:** `del C:\GIT\dashboard.db` then re-run `sync_from_asana.py`
-
-### 3.4 Answer Generation (`C:\GIT\rag-system\rag\generator.py`)
+### 3.6 Answer Generation (`C:\GIT\rag-system-qdrant\rag\generator.py`)
 
 Uses Claude Opus 4.8 (`claude-opus-4-8`) via Anthropic API. Requires
-`ANTHROPIC_API_KEY` in `C:\GIT\rag-system\.env`.
-
-`max_tokens=4096` (increased from 2048 on 2026-08-03 — responses were truncating mid-sentence).
-Do not lower this without testing on long queries first.
+`ANTHROPIC_API_KEY` in `C:\GIT\rag-system-qdrant\.env` or `C:\GIT\.env`.
 
 ---
 
 ## 4. Daily Operations — Email Sync & Ingest
 
-### Easiest method — UI Scripts panel (recommended):
+**No Flask needed.** Stop Flask or Streamlit first (Qdrant lock). Two-step process:
 
-Open `http://localhost:5000` and use the **Scripts** panel in the sidebar:
+```powershell
+# Step 1 — export from Outlook (incremental):
+python C:\ParamountRAG\scripts\sync_outlook.py --mail
 
-| Button | What it does |
-|--------|-------------|
-| **Incremental Sync** | Pulls new Outlook emails since last sync, ingests them. Use daily. |
-| **Full Sync** | Re-exports ALL Outlook email (ignores cursor), then ingests. Use when emails were missed. Takes several minutes. |
-| **Ingest Todo Folder** | Scans `C:\Paramount\local_docs` and the Phase 4a SharePoint folder for new/changed files and ingests them. Files are NOT moved. |
-| **Sync Tactiq** | Spawns a Claude session to fetch new Tactiq meeting summaries and ingest them. **Must be clicked from within an active Claude Code session** — Tactiq MCP auth is tied to the session. |
-
-Live output streams into the log window below the buttons. Chunk count updates when done.
-
-### Schedule:
-**No automated schedule.** All syncs are run ad hoc manually. Do NOT re-enable scheduled tasks without reviewing this section first.
-
-**Windows Task Scheduler jobs (as of 2026-07-29):**
-| Task | State | Script | Note |
-|------|-------|--------|------|
-| ParamountRAG-Sync-8AM | **Disabled** | `sync_outlook.py --ingest` | Missing `--mail` flag — misconfigured |
-| ParamountRAG-Sync-Noon | **Disabled** | `sync_outlook.py --ingest` | Missing `--mail` flag — misconfigured |
-| RAG ChromaDB Backup | Enabled | `backup_rag.bat` | Nightly at 2:00 AM — keep enabled |
-
-If re-enabling the sync tasks, fix the Arguments to include `--mail`: `sync_outlook.py --mail --ingest`
-
-> Previously "RAG All Syncs" Task Scheduler job was removed 2026-07-18.
-
-### Command line (ad hoc):
-```
-cd C:\ParamountRAG\scripts
-
-# Email — incremental (daily) — USE THIS by default
-python sync_outlook.py --mail --ingest
-
-# Calendar items (meetings) — incremental
-python sync_outlook.py --calendar --ingest
-
-# Email + Calendar together
-python sync_outlook.py --all --ingest
-
-# Targeted re-sync for a specific date window (e.g. last 3 days):
-python sync_outlook.py --mail --since 2026-07-20T00:00:00 --ingest
-
-# Full historical re-sync — only when resetting or recovering
-python sync_outlook.py --mail --full --ingest
+# Step 2 — ingest into Qdrant (direct, no Flask):
+python C:\GIT\ingest_emails_batched.py
 ```
 
-> **IMPORTANT:** Do NOT use `--full` for routine syncs. It re-exports all 600+ emails every time. Use `--mail` (incremental) by default. Use `--since <ISO datetime>` to target a specific window without full re-sync.
+**IMPORTANT:**
+- Use `--mail` (incremental). **NEVER `--full`** for routine syncs — re-exports all 600+ emails.
+- `ingest_emails_batched.py` writes directly to Qdrant. Stop Streamlit/Flask first.
+- After ingest, check the `skipped_empty` count in output — high skips indicate a problem.
 
 ### Key files:
 | File | Path | Purpose |
@@ -247,62 +201,51 @@ python sync_outlook.py --mail --full --ingest
 | Email archive | `C:\ParamountRAG\outlook\email\emails.json` | Input to ingest |
 | Sync cursor | `C:\ParamountRAG\outlook\email\last_sync.txt` | Tracks last sync time |
 | Sync script | `C:\ParamountRAG\scripts\sync_outlook.py` | Outlook COM exporter |
-| Email parser | `C:\GIT\rag-system\rag\email_json.py` | Parses JSON → chunks |
+| Email ingest | `C:\GIT\ingest_emails_batched.py` | Direct to Qdrant |
+
+### Targeted re-sync by date window:
+```
+python C:\ParamountRAG\scripts\sync_outlook.py --mail --since 2026-07-20T00:00:00
+python C:\GIT\ingest_emails_batched.py
+```
 
 ### CRITICAL:
-- **NEVER use Graph API (`ingest_email.py`) for email** — always use the COM pipeline
-- After ingest, check the skipped_empty count in the response — silent skips indicate a problem
+- **NEVER use Graph API** for email — always use the COM pipeline (`sync_outlook.py`)
 - Skipped folders: Sync Issues, T&E, Asana, Training, Deleted Items, Drafts
 
 ---
 
-## 5. Document Ingest — Files (Primary)
+## 5. Document Ingest — Primary
 
-**Script:** `C:\ParamountRAG\scripts\ingest_todo.py`  
-**UI button:** **Ingest Todo Folder** in the Scripts panel
+**Script:** `C:\GIT\ingest_phase4a_4b_local.py`  
+**Flask required:** NO — writes directly to Qdrant  
+**Stop Streamlit/Flask first** (Qdrant embedded lock)
 
-This is the primary way to ingest SharePoint-synced files and local documents.
+```
+python C:\GIT\ingest_phase4a_4b_local.py
+```
 
 ### Watch roots:
-1. `C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4a October 2026 Go-Live` (SharePoint OneDrive sync)
-2. `C:\Paramount\local_docs` (manual drop folder — replaces the old todo/done split)
-
-### Run:
-```
-# Via UI button (recommended):
-Click "Ingest Todo Folder" in Scripts panel
-
-# Or command line:
-python C:\ParamountRAG\scripts\ingest_todo.py
-
-# With --no-label flag (skips label_chunks — use for scheduled/automated runs):
-python C:\ParamountRAG\scripts\ingest_todo.py --no-label
-```
+1. `C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4a October 2026 Go-Live`
+2. `C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4b January 2027 Go-Live`
+3. `C:\Paramount\local_docs`
 
 ### How it works:
-- Scans both watch roots recursively for supported file types
-- Skips files on the skip list, files >5MB, and MP4 files
-- MD5 hash dedup via `source_log.db` — unchanged files are skipped, changed files are re-ingested
-- Files are **never moved** — source location is tracked in source_log
-- Auto-runs `label_chunks.py --apply` at end IF Flask is not running (skips labeling if Flask is up)
+- Scans all watch roots recursively for supported file types
+- Skips files on the skip list, empty files, files >30MB, temp files (`~$*`)
+- **source_key = full file path** — dedup via MD5 hash in `source_log.db`
+- Files are **never moved** — source location tracked in source_log
+- Calls `close_client()` then `gc.collect()` before handing off to `label_chunks.py --apply`
 
 ### Dropping files for ingest:
-Simply copy files into `C:\Paramount\local_docs` and click **Ingest Todo Folder**.
-No need to manage todo/done subfolders — the hash tracker handles dedup.
+Copy files into `C:\Paramount\local_docs` and run the ingest script.
 
 ### Skip list management:
-Maintained in `source_log.db` (300+ entries as of 2026-08-02 — includes integration tx files,
-data dump globs, payroll files, whisper logs, and large data extracts). Add entries via:
 ```python
 from source_log import add_skip
 add_skip("Archive", "folder", "Skip archive folders")
 add_skip("filename.xlsx", "filename", "Raw data dump")
 ```
-
-### MAX_FILE_MB = 30
-Files over 30MB are skipped silently (re-evaluated each run, not added to skip list).
-Raised from 5MB on 2026-08-02 — large design docs (docx/pdf/pptx with embedded images) are
-legitimately big. Data dumps (xlsx/csv) are controlled via the skip list instead.
 
 ---
 
@@ -310,55 +253,30 @@ legitimately big. Data dumps (xlsx/csv) are controlled via the skip list instead
 
 ### From MP4 recordings (Whisper transcription):
 
-**Script:** `C:\ParamountRAG\scripts\transcribe_mp4.py`  
-**Input:** MP4 files in `C:\ParamountRAG\meetings\`  
-**Output:** VTT transcript alongside each MP4, then auto-ingested into ChromaDB  
-**Model:** Whisper "small" (CPU FP32, ~25 min per 175MB file)
+**Script:** `C:\ParamountRAG\scripts\transcribe_mp4.py`
 
 ```
 cd C:\ParamountRAG
 python scripts\transcribe_mp4.py
 ```
 
-Options:
-```
-python scripts\transcribe_mp4.py --dry-run          # preview only, no transcription
-python scripts\transcribe_mp4.py --model medium     # more accurate, slower
-```
-
 ### From Zoom recordings (batch backlog):
 
-**Script:** `C:\GIT\rag-system\transcribe_backlog.py`  
-**Input:** Zoom folder at `C:\Users\kevin\OneDrive\Documents\Zoom`  
-**Skips:** Files already in ChromaDB (checks by source name)
+**Script:** `C:\GIT\rag-system-qdrant\transcribe_backlog.py`
 
 ```
-cd C:\GIT\rag-system
+cd C:\GIT\rag-system-qdrant
 python transcribe_backlog.py
-```
-
-### From existing VTT files:
-
-**Script:** `C:\ParamountRAG\scripts\ingest_vtt.py`
-
-```
-cd C:\ParamountRAG
-python scripts\ingest_vtt.py path\to\file.vtt
 ```
 
 ### From Tactiq (meeting summaries):
 
-**Script:** `C:\ParamountRAG\scripts\sync_tactiq.py`  
-**UI button:** **Sync Tactiq** in the Scripts panel  
-**Auth:** Tactiq MCP is only authenticated inside an active Claude Code session. The button **must be clicked from within Claude Code** — it will fail with 401 if run from a scheduled task or standalone terminal.
+**sync_tactiq.py subprocess is broken.** Use Tactiq MCP tools directly in-session:
+1. `list_recent_meetings` — get meetings since last ingest
+2. `get_meeting` — read `detailedSummary.content`
+3. Call `python C:\ParamountRAG\scripts\ingest_tactiq.py --file <json>` per meeting
 
-How it works:
-1. Reads `source_log.db` to find already-ingested Tactiq meeting IDs
-2. Spawns a `claude -p` subprocess with Tactiq MCP tools
-3. Claude fetches new meeting summaries and calls `ingest_meeting()` for each
-4. Ingested chunks have `doc_type=tactiq`; clickable links point to `https://app.tactiq.io/...`
-
-**Run manually anytime** by clicking the Sync Tactiq button in the UI while Claude Code is open. As of 2026-07-18: 23 meetings ingested, 102 chunks.
+Filter to meetings since 2026-06-01 only.
 
 ---
 
@@ -366,456 +284,269 @@ How it works:
 
 **Script:** `C:\ParamountRAG\scripts\label_chunks.py`
 
-Labels chunks with doc type (Spreadsheet, FDD, Meeting, Tracker, etc.) using a lightweight classifier.
+Labels chunks with doc type (Spreadsheet, FDD, Meeting, Tracker, etc.) using filename rules.
+Uses Qdrant `scroll()` + `set_payload()` — requires exclusive lock on `qdrant_db`.
 
-### Rules:
-- **Must run with Flask DOWN** — running while Flask is up causes double ChromaDB load
-- Runs automatically at end of `ingest_batched.py` (stops Flask, labels, restarts Flask)
-- Run manually only after email/attachment ingest (which doesn't auto-label):
+**Stop Flask and Streamlit before running manually.**
 
 ```
-# Stop Flask first, then:
+# Dry run — shows what would change:
+python C:\ParamountRAG\scripts\label_chunks.py
+
+# Apply changes:
 python C:\ParamountRAG\scripts\label_chunks.py --apply
-# Restart Flask when done
 ```
+
+Runs automatically at end of `ingest_phase4a_4b_local.py` (after `close_client()` releases lock).
 
 ---
 
 ## 8. Agentic RAG (Streamlit UI)
 
-A separate Claude tool-use agent that iteratively searches ChromaDB (read-only). Better than the regular UI for people lookups and complex multi-source questions.
+A Claude tool-use agent that iteratively searches Qdrant (read-only).
 
 **Start:** `C:\GIT\start_streamlit.bat`  
 **URL:** `http://localhost:8501`  
 **Model:** `claude-opus-4-8` with adaptive thinking  
-**Tool:** `query_chroma` (semantic) + `keyword_search` (exact text match)  
 **Scripts:** `C:\ParamountRAG\scripts\agent.py` + `app_agent.py`
 
-Flask (`localhost:5000`) must also be running for the `/open?path=...` clickable links to work.
+**Qdrant lock:** Streamlit holds the lock while running. Stop it before any ingest or label_chunks run.
 
----
+**Source links:** Links in the Streamlit UI use `file:///` URLs. Chrome blocks navigation
+to `file:///` from web pages — links may not open directly. If you need clickable file links,
+run Flask (`localhost:5000`) and switch link format back to `/open?path=...`.
 
-## 9. Shadow DB (chroma_db_new)
-
-A parallel ChromaDB at `C:\GIT\chroma_db_new` built from scratch without touching the live DB. Used to create a clean DB (no orphan chunks) before swapping to production.
-
-| Script | Purpose |
-|--------|---------|
-| `C:\ParamountRAG\scripts\ingest_new_db.py` | Ingest all files into chroma_db_new (targets port 5001) |
-| `C:\ParamountRAG\scripts\start_flask_new.ps1` | Start shadow Flask on port 5001 pointing at chroma_db_new |
-| `C:\ParamountRAG\scripts\compare_chroma.py` | Compare old vs new DB (chunk counts, missing sources) |
-| `C:\ParamountRAG\scripts\swap_chroma.ps1` | Swap chroma_db_new → chroma_db (requires "YES" confirmation) |
-
-**Shadow DB status (as of 2026-07-15):** Built, not yet swapped to production. Kevin will swap after hours once email ingest into new DB is done.
-
----
-
-## 10. Document Ingest — Ad-hoc
-
-### Todo folder workflow (recommended for ad-hoc files):
-
-1. Drop files into `C:\Paramount\todo`
-2. Click **Ingest Todo Folder** in the UI Scripts panel (or run `python ingest_todo.py`)
-3. Files are ingested and automatically moved to `C:\Paramount\done`
-
-Supported types: PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, MSG, ZIP
-
-**Script:** `C:\ParamountRAG\scripts\ingest_todo.py`
-
-### Via the web UI drag-and-drop:
-- Open `http://localhost:5000`
-- Drag and drop files onto the Upload zone, or click "browse files"
-- Files are ingested but NOT moved/tracked (use todo workflow if you want tracking)
-
-### Via script (folder batch):
-
-**Script:** `C:\GIT\rag-system\ingest_folder.py`
-
+**CLI mode (no Streamlit):**
 ```
-cd C:\GIT\rag-system
-python ingest_folder.py "C:\path\to\folder"
+python C:\ParamountRAG\scripts\agent_query_to_file.py "your question" --heading "Section Title"
 ```
-
-### Via ZIP upload (large batches):
-Use the ZIP upload endpoint in the UI — streams per-file progress, resumes on retry.
-
-### Asana RAID/RICEFW exports:
-Export from Asana as CSV → drop in `C:\Paramount\todo` → click **Ingest Todo Folder**.
-The old method (dedicated ingest scripts) still works but the todo workflow is simpler.
-
-**Note:** Asana CSVs go into ChromaDB (for RAG search). The dashboard
-`sync_from_asana.py` is separate — it loads structured data into `dashboard.db`
-for the tracking panels, not ChromaDB.
+Output appends to `C:\Paramount\ARAG_DOCS\ARAG_Briefing_YYYY-MM-DD.md`.
 
 ---
 
-## 10. Dashboard — Doc Requests & Deliverables
+## 9. Dashboard — Doc Requests & Deliverables
 
-Access: `http://localhost:5000/dashboard`
+Access: `http://localhost:5000/dashboard` (requires Flask)
 
 ### Seeding data from Asana export:
-
-**Step 1 — Export from Asana:**
-- Open Oracle ERP - RICEFW Master project in Asana
-- Export as CSV → save to `C:\Paramount\done\Oracle_ERP_-_RICEFW_Master.csv`
-
-**Step 2 — Run sync:**
 ```
-cd C:\GIT\rag-system
+cd C:\GIT\rag-system-qdrant
 python sync_from_asana.py
 ```
 
-- Filters to O2C (AR) workstream, Phase 4a, top-level tasks only
-- Upserts on natural keys — safe to re-run; manual edits survive
-- Skips Deferred and Out of Scope items
-- 188 deliverables + 167 doc requests on initial seed (2026-07-03)
-
-**Step 3 — Update date_requested:**
-All doc_request rows default `date_requested` to the sync date. Update per item
-via the dashboard edit modal (click any row in the Doc Requests panel).
+CSV must be at: `C:\Paramount\local_docs\Oracle_ERP_-_RICEFW_Master.csv`
 
 ### Dashboard panels:
-
-| Panel | Data source | Filter |
-|-------|-------------|--------|
-| Deadlines & Overdue | Hardcoded milestones + RAG query | None |
-| Open Items & Risks | RAG query | None |
-| Workstream Status | RAG query | None |
-| Recent Activity | ChromaDB metadata (48h) | None |
-| Stakeholder Pulse | ChromaDB metadata | 8 named stakeholders |
-| **Open Doc Requests** | `dashboard.db` → `doc_requests` | Phase dropdown |
-| **Team Deliverables** | `dashboard.db` → `deliverables` | Phase dropdown |
-
-### Editing rows on the dashboard:
-- Click any row in the Doc Requests or Deliverables panel
-- Edit modal opens with relevant fields
-- Click Save → PATCH API call → panel reloads automatically
-
-### Staleness logic (Doc Requests):
-- **Open** = date_received is NULL
-- **Received** = date_received set, reviewed = 0
-- **Ready** = date_received set, reviewed = 1
-- **Amber** = Open for 3–4 business days (Mon–Fri only)
-- **Red** = Open for 5+ business days
-
-### API endpoints for dashboard:
-```
-GET  /api/doc_requests?phase=Phase+4a+...    List doc requests (filtered)
-POST /api/doc_requests                        Add new row
-PATCH /api/doc_requests/<id>                  Update row
-GET  /api/deliverables?phase=Phase+4a+...    List deliverables (filtered)
-POST /api/deliverables                        Add new row
-PATCH /api/deliverables/<id>                  Update row
-GET  /api/phases                              List distinct phase values
-```
+| Panel | Data source |
+|-------|-------------|
+| Deadlines & Overdue | Hardcoded milestones + RAG query |
+| Open Items & Risks | RAG query |
+| Recent Activity | Qdrant metadata (48h) |
+| Stakeholder Pulse | Qdrant metadata |
+| **Open Doc Requests** | `dashboard.db` → `doc_requests` |
+| **Team Deliverables** | `dashboard.db` → `deliverables` |
 
 ---
 
-## 11. Audit & Health Checks
+## 10. Audit & Health Checks
 
-### Full knowledge base audit:
-
-**Script:** `C:\ParamountRAG\scripts\audit_chroma.py`  
-**Output:** Console summary + `C:\ParamountRAG\logs\chroma_audit.txt`
-
-```
-cd C:\ParamountRAG
-python scripts\audit_chroma.py
-```
-
-Reports: total chunks, unique sources, breakdown by doc type, date range,
-author coverage, risk-flagged items.
-
-### Email reconciliation (emails.json vs ChromaDB):
-
-**Script:** `C:\ParamountRAG\scripts\reconcile.py`  
-**Output:** Console summary + `C:\ParamountRAG\logs\reconciliation_report.txt`
-
-```
-cd C:\ParamountRAG
-python scripts\reconcile.py
-```
-
-Reports: emails in JSON vs chunks in DB, missing emails by entry_id.
-
-### Quick CLI query (RAG → file):
-
-**Script:** `C:\ParamountRAG\scripts\query_to_file.py`
-
+### Quick CLI query:
 ```
 cd C:\ParamountRAG
 python scripts\query_to_file.py "What is the status of INT631?" --out answers.txt
-python scripts\query_to_file.py "Who is the backup for Prem James?" --heading "Prem OOO"
+```
+
+### Check chunk count:
+```python
+from qdrant_client import QdrantClient
+c = QdrantClient(path=r"C:\GIT\qdrant_db")
+print(c.get_collection("rag_documents").points_count)
+c.close()
+```
+
+### Check source_log:
+```
+sqlite3 C:\GIT\qdrant_db\source_log.db "SELECT COUNT(*) FROM source_log;"
 ```
 
 ---
 
-## 12. Backup & Recovery
+## 11. Backup & Recovery
 
-### On-demand backup (preferred):
+### On-demand backup (before any bulk ingest):
 
-**Script:** `C:\GIT\backup_chroma.ps1`  
-**Destination:** `C:\Users\kevin\OneDrive\Backups\chroma_db_backup_YYYYMMDD_HHMMSS\` (timestamped — preserves each backup independently)
+**Stop Flask and Streamlit first** — both hold the Qdrant lock.
 
 ```powershell
-powershell -File C:\GIT\backup_chroma.ps1
+$ts = Get-Date -Format "yyyyMMdd_HHmm"
+Copy-Item -Recurse "C:\GIT\qdrant_db" "Z:\ChromaBackups\qdrant_db_backup_$ts"
 ```
 
-Run this **before any bulk ingest, delete, or schema change.** Each call creates a new timestamped folder — no overwrites.
+Always to `Z:\ChromaBackups\`. **Never** backup to `C:\GIT` or use robocopy.
+Each call creates a new timestamped folder.
 
-### Nightly automated backup:
+### If qdrant_db is lost or corrupt:
+1. Stop Flask and Streamlit
+2. Rename `C:\GIT\qdrant_db` to `qdrant_db_YYYYMMDD_broken`
+3. Restore from `Z:\ChromaBackups\qdrant_db_backup_YYYYMMDD_HHMM\`
+4. Re-run email ingest for any emails since the backup
+5. Re-run document ingest for any docs since the backup
 
-**Script:** `C:\GIT\backup_rag.bat`  
-**Schedule:** Every night at 2:00 AM (Windows Task Scheduler — "RAG ChromaDB Backup")  
-**Destination:**
-- ChromaDB → `C:\Users\kevin\OneDrive\Backups\chroma_db\` (rolling mirror — overwrites previous)
-- dashboard.db → `C:\Users\kevin\OneDrive\Backups\dashboard_db\`
-
-OneDrive then syncs to cloud automatically.
-
-**Run manually anytime:**
-```
-C:\GIT\backup_rag.bat
-```
-
-### Git recovery points:
-
-List all recovery tags:
-```
-cd C:\GIT
-git tag
-```
-
-Restore code to a recovery point (does NOT affect ChromaDB — code only):
-```
-cd C:\GIT
-git checkout recovery/2026-07-03-dashboard-panels
-```
-
-Return to latest:
-```
-git checkout master
-```
-
-Current recovery tags:
-| Tag | Date | What it captures |
-|-----|------|-----------------|
-| `recovery/2026-07-02-email-html-fix` | 2026-07-02 | After HTML email parsing fix |
-| `recovery/2026-07-03-dashboard-panels` | 2026-07-03 | After dashboard panels added |
-
-### If ChromaDB is lost:
-
-ChromaDB is NOT in git (too large). Recovery requires:
-1. Restore from `C:\Users\kevin\OneDrive\Backups\chroma_db\` (last nightly backup)
-2. Re-run email ingest for any emails since the backup
-3. Re-run document ingest for any docs since the backup
-
-**This is why nightly backups are critical.**
+### Revert to ChromaDB (see §16):
+Both `C:\GIT\chroma_db` and `C:\GIT\rag-system` are preserved and untouched.
 
 ---
 
-## 13. Flask Application — Routes Reference
+## 12. Flask Application — Routes Reference
+
+Flask is only needed for the dashboard and `/open` file links. Ingest and ARAG work without it.
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/` | GET | Main RAG chat UI |
+| `/` | GET | Main RAG chat UI (legacy — use Streamlit ARAG instead) |
 | `/dashboard` | GET | Phase 5 war-room dashboard |
 | `/api/query` | POST | SSE streaming RAG query + Claude answer |
 | `/api/recent` | GET | Recent ingested items (last 48h) |
 | `/api/stakeholder_pulse` | GET | Last contact date per stakeholder |
 | `/api/sources` | GET | List all ingested sources + chunk count |
-| `/api/sources/<name>` | DELETE | Remove a source from ChromaDB |
-| `/api/upload` | POST | Upload + ingest document files |
-| `/api/ingest/zip` | POST | Upload + ingest ZIP (streaming progress) |
-| `/api/ingest/email-json` | POST | Ingest emails.json into ChromaDB |
-| `/api/ingest/attachments` | POST | Ingest email attachments into ChromaDB |
-| `/open` | GET | Open a file in Windows (`?path=C:/...`) — used by agentic RAG for clickable links |
-| `/api/schema` | GET | Metadata schema (workstreams, doc types) |
+| `/api/upload` | POST | Upload + ingest document files (ad-hoc) |
+| `/open` | GET | Open a file in Windows (`?path=C:/...`) |
+| `/api/schema` | GET | Metadata schema |
 | `/api/phases` | GET | Distinct phase values for dashboard filter |
 | `/api/doc_requests` | GET/POST | List / add doc requests |
 | `/api/doc_requests/<id>` | PATCH | Update doc request row |
 | `/api/deliverables` | GET/POST | List / add deliverables |
 | `/api/deliverables/<id>` | PATCH | Update deliverable row |
-| `/auth/login` | GET | Microsoft OAuth2 login (Graph API) |
-| `/auth/callback` | GET | OAuth2 callback |
-| `/auth/logout` | POST | OAuth2 logout |
-| `/auth/status` | GET | Check Graph API auth status |
-| `/api/graph/mail` | POST | Ingest via Graph API (NOT for email — see §4) |
-| `/api/graph/calendar` | POST | Ingest calendar via Graph API |
-| `/api/graph/sharepoint` | POST | Ingest SharePoint documents |
 
 ---
 
-## 14. Critical Rules — What Not To Do
+## 13. Critical Rules — What Not To Do
 
-### NEVER do these:
+1. **Don't use `--full` for routine email syncs**  
+   Use `sync_outlook.py --mail` (incremental). `--full` re-exports all 600+ emails.
 
-1. **Don't edit `app.py`, `store.py`, or `email_json.py` while Flask is running**  
-   Debug auto-reload triggers HNSW index rebuild — UI shows 0 chunks. Not data loss
-   but looks catastrophic. Stop Flask first, edit, restart.
+2. **Don't use Graph API for email**  
+   `ingest_email.py` uses Microsoft Graph API. Always use `sync_outlook.py` (COM/Outlook).
 
-2. **Don't run scripts without explicit `persist_dir=r"C:\GIT\chroma_db"`**  
-   Scripts run from `C:\GIT\rag-system` default to `./chroma_db` which is
-   `C:\GIT\rag-system\chroma_db` — a shadow DB the Flask app never reads.
-   Always pass the path explicitly.
+3. **Don't delete `qdrant_db\` without a confirmed backup**  
+   This is irreplaceable without a full re-ingest (~36K chunks).
 
-3. **Don't use Graph API for email**  
-   `ingest_email.py` uses Microsoft Graph API. This is unreliable and not the
-   production pipeline. Always use `sync_outlook.py` (COM/Outlook desktop).
+4. **Don't delete `chroma_db\` or `rag-system\`**  
+   These are the revert path to ChromaDB (126K chunks, 2026-08-18 rebuild).
 
-4. **Don't delete `chroma_db\` without a confirmed backup**  
-   This is irreplaceable without a full re-ingest (days of work).
+5. **Don't ingest MP4 files**  
+   They are large and useless for RAG. Transcribe to VTT first.
 
-5. **Don't use `collection.get()` for full table scans**  
-   At 441K chunks it times out (>90s). Use `where_document={"$contains": "..."}` for text search, or query `source_log.db` / `chroma.sqlite3` directly for metadata queries.
+6. **Don't ingest anything dated before 2026-06-01** without asking.
 
-6. **Don't add new folders to skip without updating BOTH places:**  
-   - `C:\GIT\rag-system\rag\email_json.py` → `_SKIP_FOLDERS`  
+7. **Don't run two Qdrant processes simultaneously**  
+   Qdrant embedded lock is exclusive. Flask, Streamlit, ingest scripts, and label_chunks
+   all need the lock. Only one at a time.
+
+8. **Don't delete chunks from Qdrant**  
+   Use skip list only. Wait for next rebuild.
+
+9. **Don't add new email skip folders without updating BOTH places:**  
+   - `C:\GIT\rag-system-qdrant\rag\email_json.py` → `_SKIP_FOLDERS`  
    - `C:\ParamountRAG\scripts\sync_outlook.py` → `_SKIP_FOLDER_FRAGMENTS`
 
-7. **Don't run label_chunks.py while Flask is running**  
-   Double ChromaDB load causes memory explosion. Stop Flask first, label, restart.
-
-8. **Don't use `--full` for routine email syncs**  
-   Use `sync_outlook.py --mail` (incremental). `--full` re-exports all 600+ emails every time.
-
-9. **Don't ingest MP4 files**  
-   They are large and useless for RAG. Transcribe to VTT first if needed.
-
-10. **Don't run concurrent ingests**  
-    ingest_batched + email-json + attachments simultaneously will crash Flask. Always sequential.
+10. **Don't ingest RICEFW/RAID CSVs via `ingest_asana_ricefw.py` or `ingest_asana_raid.py`**  
+    These are ingested by `ingest_phase4a_4b_local.py` from `local_docs`. Don't double-ingest.
 
 ---
 
-## 15. DB Maintenance & Quality
+## 14. Troubleshooting
 
-### Chunk quality check:
-```
-cd C:\ParamountRAG\scripts
-python quality_check.py
-```
-Uses ChromaDB PersistentClient (not raw SQLite) — respects deletions. Reports chunk count,
-doc type breakdown, label coverage, source type breakdown, top sources by chunk count,
-and ingestion recency. Run after any bulk delete or ingest to verify counts.
-
-### Deleting a source:
-```python
-import requests, urllib.parse
-sk = "Filename.xlsx"
-requests.delete(f"http://127.0.0.1:5000/api/sources/{urllib.parse.quote(sk, safe='')}", timeout=120)
-```
-Then remove from source_log:
-```python
-from source_log import remove
-remove(sk)
-```
-
-### Adding to skip list (prevent future re-ingest):
-```python
-from source_log import add_skip
-add_skip("PATTERN_*", match_type="glob", note="reason")
-add_skip("exact_filename.xlsx", match_type="filename", note="reason")
-```
-Valid match_type values: `folder`, `filename`, `glob`, `path`
-
-### Workstream backfill:
-**Script:** `C:\ParamountRAG\scripts\backfill_workstream.py`
-Must run with Flask DOWN. Tags ChromaDB chunks with workstream field based on filename/path rules.
-```
-# Dry-run (default):
-python backfill_workstream.py
-
-# Apply:
-python backfill_workstream.py --apply
-```
-As of 2026-08-02: 18,824 / 25,539 chunks tagged (73.7%). Rules cover: Meeting, Email, GL,
-Security, EPM, Testing, Data Migration, Localization, Integrations, O2C, HCM, DTC, P2P, PMO.
-Remaining 6,715 chunks unmatched — expand rules in `derive_workstream()` as new file patterns emerge.
-
-### ChromaDB backup (manual):
-```powershell
-& "C:\ParamountRAG\scripts\backup_chroma.ps1"
-```
-Backs up to `Z:\ChromaBackups`. **Always run before bulk deletes.**
-
----
-
-## 16. Troubleshooting
+### `AlreadyLocked` / `Storage folder already accessed`
+Another process has the Qdrant lock. Stop Flask, Streamlit, or any running Python process
+that opened `qdrant_db`. Check: `Get-Process python`
 
 ### Dashboard shows 0 chunks / "DATABASE OFFLINE"
-- Flask is not running → `cd C:\GIT\rag-system && python app.py`
-- Flask just restarted (editing a file triggered debug reload) → wait 30–60s for HNSW rebuild
+- Flask is not running → `cd C:\GIT\rag-system-qdrant && python app.py`
 
 ### Email query returns no results after sync
-- Check if ingest actually ran (hit the Ingest button in UI, don't just sync)
-- Check `skipped_empty` count in ingest response — may be silently skipping emails
-- Verify the correct DB: scripts must use `persist_dir=r"C:\GIT\chroma_db"`
+- Check ingest script output — look at `skipped_empty` count
+- Verify source_log.db path: `C:\GIT\qdrant_db\source_log.db`
 
-### sync_outlook.py only picks up 3–5 emails (not all)
-- The cursor `last_sync.txt` exists → delete it for a full re-sync:
+### sync_outlook.py only picks up 3–5 emails
+- The cursor `last_sync.txt` exists → delete it for a full re-export:
   `del C:\ParamountRAG\outlook\email\last_sync.txt`
+
+### Files re-ingesting every run (0 updated shown)
+- source_key collision — two files with the same name in different folders
+- Fixed in `ingest_phase4a_4b_local.py` (2026-08-23): source_key = full path
+
+### label_chunks writes 0 labels
+- Labeling runs after ingest. If it ran before the new chunks were committed, re-run manually:
+  `python C:\ParamountRAG\scripts\label_chunks.py --apply`
+
+### Two Flask processes → 404 on known routes
+- Check: `netstat -ano | findstr ":5000"` — should be ONE listener.
+- Kill all, restart once.
 
 ### Doc requests / deliverables panel empty
 - `dashboard.db` may not exist → run `python sync_from_asana.py`
-- Check CSV exists: `C:\Paramount\done\Oracle_ERP_-_RICEFW_Master.csv`
 
-### Staleness not calculating (all show 0bd)
-- `date_requested` is set to the sync date (2026-07-03) for all seeded rows
-- Update per item via edit modal with the real date you requested the document
-
-### ChromaDB shadow DB confusion
-- Symptom: health checks pass but RAG queries return wrong/stale results
-- Cause: a script created `C:\GIT\rag-system\chroma_db` instead of using production
-- Fix: always pass `persist_dir=r"C:\GIT\chroma_db"` explicitly in all scripts
+### Qdrant `UserWarning: Local mode is not recommended for collections with more than 20,000 points`
+- Informational only — ignore. At ~36K points performance is fine. Not a reason to migrate to Docker.
 
 ---
 
----
-
-## 17. Kevin's Task Tracker — Kevin_Todo.xlsx
+## 15. Kevin's Task Tracker — Kevin_Todo.xlsx
 
 **File:** `C:\Paramount\local_docs\Kevin_Todo.xlsx`
 
-Personal task tracker for Kevin's action items across all workstreams. Always close Excel before running any script that writes to it.
+Always close Excel before running any script that writes to it.
 
 ### Column layout (A–G)
-
 | Col | Field | Notes |
 |-----|-------|-------|
-| A | Status | Open / In Progress / Done / Blocked — color-coded |
+| A | Status | Open / In Progress / Done / Blocked |
 | B | Task | Wrap text |
-| C | Workstream | AR / Integrations, AR / Billing, AR / Tax, GL / R2R, EMEA Localizations, Studio Billing / AR, Testing / Go-Live, General |
-| D | Source | "Meeting: Title YYYY-MM-DD" or "Email: subject + date" or "Slack: context + date" |
+| C | Workstream | AR / Integrations, AR / Billing, AR / Tax, GL / R2R, etc. |
+| D | Source | "Meeting: Title YYYY-MM-DD" or "Email: subject + date" |
 | E | Date Added | YYYY-MM-DD |
 | F | Due Date | YYYY-MM-DD or blank |
 | G | Notes | Brief context |
 
-Status cell fill colors: Open=FFD966 (amber), In Progress=9DC3E6 (blue), Done=A9D18E (green), Blocked=FF7373 (red).
-
 ### Scripts
-
 | Script | Purpose |
 |--------|---------|
-| `C:\GIT\scan_todos.py` | Dedup + append layer for automated scan; `--input tasks.json`, `--dry-run`, `--print-existing`, `--update-cursor "source:ISO"` |
-| `C:\GIT\add_todo.py` | Manually append a single task (interactive) |
-| `C:\GIT\todo_cursor.json` | Last-scan timestamps (tactiq / email / slack) |
-| `C:\GIT\todo_scan_output.json` | Intermediate candidates file (Claude writes, scan_todos.py consumes) |
+| `C:\GIT\scan_todos.py` | Dedup + append layer for automated scan |
+| `C:\GIT\add_todo.py` | Manually append a single task |
+| `C:\GIT\todo_cursor.json` | Last-scan timestamps per source |
 
-### "Scan my todos" workflow (CLAUDE.md-driven)
-
-Triggered by saying **"scan my todos"** to Claude Code. Claude:
-
-1. Loads cursor from `todo_cursor.json` (default: 7 days ago if no cursor)
-2. Fetches Tactiq meetings Kevin attended since cursor via MCP (`list_recent_meetings` + `get_meeting`)
-3. Reads `C:\ParamountRAG\outlook\email\emails.json` for emails since cursor
-4. Searches Slack with `to:<@U0BA98BHRSQ>` — **do NOT use generic "Kevin"** (returns Kevin Gausman baseball noise)
-5. Extracts Kevin-specific action items inline; writes to `todo_scan_output.json`
-6. Runs `python C:\GIT\scan_todos.py --input C:\GIT\todo_scan_output.json` (55% word-overlap dedup)
-7. Updates cursor per source via `--update-cursor "source:ISO_TIMESTAMP"`
-8. Reports tasks found per source, net-new count, and list of new tasks
-
-Task count history: 35 (2026-08-03 initial build) → 40 (2026-08-03 after first automated scan).
+### "Scan my todos" workflow
+Triggered by saying **"scan my todos"** to Claude Code. Uses Tactiq MCP + emails.json + Slack.
+Slack search: use `to:<@U0BA98BHRSQ>` — NOT generic "Kevin" (returns baseball noise).
 
 ---
 
-*Manual maintained by Claude Code. Update CHANGELOG.md and this manual at the end of each session.*
+## 16. Revert to ChromaDB
+
+Both the old Flask app and ChromaDB are preserved intact. To revert:
+
+1. **Stop Qdrant Flask and Streamlit** (Ctrl+C in their terminals)
+
+2. **Restore source_log.py DB path:**
+   Edit `C:\ParamountRAG\scripts\source_log.py` line 12:
+   ```python
+   _DB_PATH = Path(r"C:\GIT\chroma_db\source_log.db")
+   ```
+
+3. **Restore label_chunks.py** (Qdrant version committed — revert in git):
+   ```
+   git -C C:\ParamountRAG show HEAD~1:scripts/label_chunks.py > scripts/label_chunks.py
+   ```
+
+4. **Start old Flask:**
+   ```
+   cd C:\GIT\rag-system
+   python app.py
+   ```
+
+ChromaDB at `C:\GIT\chroma_db` contains the 2026-08-18 full rebuild (126,664 chunks).
+
+---
+
+*Manual maintained by Claude Code. Update this manual at the end of each session.*
