@@ -44,8 +44,9 @@ if __name__ == "__main__":
             current_hash = file_md5(fpath)
             existing = lookup_by_path(full_path)
 
-            # Build source key (same format ingest_todo uses: relative-ish filename)
-            source_key = fpath.name
+            # [2026-08-23] Use full path as source_key — filename alone causes collisions
+            # when the same filename exists in multiple watch roots (e.g. duplicate pptx)
+            source_key = full_path
 
             # Chunk the file
             chunks = chunk_document(fpath)
