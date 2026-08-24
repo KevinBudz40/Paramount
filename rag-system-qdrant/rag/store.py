@@ -30,6 +30,16 @@ _clients: dict[str, QdrantClient] = {}
 _models:  dict[str, SentenceTransformer] = {}
 
 
+def close_client(persist_dir: str = "./qdrant_db") -> None:
+    """Explicitly close and evict the cached Qdrant client to release the file lock."""
+    if persist_dir in _clients:
+        try:
+            _clients[persist_dir].close()
+        except Exception:
+            pass
+        del _clients[persist_dir]
+
+
 def _get_client(persist_dir: str) -> QdrantClient:
     if persist_dir not in _clients:
         client = QdrantClient(path=persist_dir)

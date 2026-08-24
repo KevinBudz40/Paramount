@@ -22,7 +22,7 @@ ingest_batched.WATCH_ROOTS = [
 from ingest_batched import collect_new_files
 from source_log import init_db, upsert, remove, file_md5, lookup_by_path
 from rag.chunker import chunk_document
-from rag.store import add_chunks
+from rag.store import add_chunks, close_client
 
 QDRANT_DIR  = r"C:\GIT\qdrant_db"
 LABEL_SCRIPT = Path(r"C:\ParamountRAG\scripts\label_chunks.py")
@@ -91,7 +91,8 @@ if __name__ == "__main__":
 
     print(f"\nIngest complete: {ingested} new, {updated} updated, {skipped} skipped, {errors} errors")
 
-    # [2026-08-23] Force GC before label_chunks — Qdrant embedded lock not released until client is GC'd
+    # [2026-08-23] Explicitly close cached Qdrant client to release file lock before label_chunks
+    close_client(QDRANT_DIR)
     gc.collect()
     print("\nRunning label_chunks --apply ...")
     subprocess.run([PYTHON, str(LABEL_SCRIPT), "--apply"], check=False)
