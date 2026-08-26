@@ -13,7 +13,7 @@ sys.path.insert(0, r"C:\GIT\rag-system-qdrant")
 sys.path.insert(0, r"C:\ParamountRAG\scripts")
 
 from rag.email_json import parse_email_json
-from rag.store import add_chunks, close_client
+from rag.store import add_chunks, close_client  # [2026-08-26] added close_client import
 
 QDRANT_DIR   = r"C:\GIT\qdrant_db"
 DEFAULT_JSON = Path(r"C:\ParamountRAG\outlook\email\emails.json")
@@ -59,7 +59,7 @@ def main():
             print(f"  {i}/{total_emails} emails done ({total_chunks_written} chunks)")
 
     print(f"\nEmail ingest complete. {total_emails} emails, {total_chunks_written} chunks.")
-    close_client(QDRANT_DIR)
+    close_client(QDRANT_DIR)  # [2026-08-26] explicit close before exit — prevents QdrantClient.__del__ ImportError on shutdown
     gc.collect()
 
 
