@@ -399,6 +399,22 @@ def query_rag():
     # Expand each chunk with its neighbouring chunks for fuller context
     chunks = expand_context(chunks, persist_dir=CHROMA_DIR)
 
+    # [2026-08-31] Look up full_path from source_log.db so frontend can render clickable /open links
+    _source_paths: dict[str, str] = {}
+    try:
+        import sqlite3 as _sl3
+        _sl_db = str(Path(CHROMA_DIR) / "source_log.db")
+        _unique_sources = list({c["source"] for c in chunks})
+        with _sl3.connect(_sl_db) as _slcon:
+            for _sk in _unique_sources:
+                row = _slcon.execute(
+                    "SELECT full_path FROM source_log WHERE source_key = ? LIMIT 1", (_sk,)
+                ).fetchone()
+                if row:
+                    _source_paths[_sk] = row[0]
+    except Exception:
+        pass
+
     sources_used = [
         {
             "source":    c["source"],
@@ -409,6 +425,12 @@ def query_rag():
             "doc_type":  c.get("doc_type", ""),
             "risk_flag": c.get("risk_flag", False),
             "priority":  c.get("priority", ""),
+            # [2026-08-31] open_url populated from source_log.db; empty string if not found
+            "open_url":  (
+                "/open?path=" + _source_paths[c["source"]]
+                if c["source"] in _source_paths
+                else c.get("tactiq_url", "")
+            ),
         }
         for c in chunks
     ]

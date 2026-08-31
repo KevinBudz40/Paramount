@@ -604,7 +604,9 @@ function renderSourceChips(msgEl, sources) {
     const authorDate = [s.author, s.date].filter(Boolean).join(" · ");
     return `
       <div class="src-chip${s.risk_flag ? " has-risk" : ""}">
-        <span class="s-name">${s.source}</span>
+        ${s.open_url
+          ? `<a class="s-name s-link" href="${s.open_url}" onclick="event.preventDefault();fetch(this.href)" title="Open file">${s.source}</a>`
+          : `<span class="s-name">${s.source}</span>`}
         <span class="s-score">${s.score}</span>
         ${authorDate ? `<span class="s-tag">${authorDate}</span>` : ""}
         ${tags.join("")}
