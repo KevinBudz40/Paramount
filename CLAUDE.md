@@ -66,6 +66,7 @@ When the user says **"scan my todos"**, **"scan for new tasks"**, or similar:
       | Stephen King | U0AL77DG8VA |
       | Slackbot (reminders) | USLACKBOT |
       *(Not found: Philipraja Francis, Upasana Chatterjee, Rob Raman, Zainab Murtaza Bharmal — not in workspace)*
+      *(Steven Reeter — D0BBE1Z8BEY — channel_not_found; different Enterprise Grid shard)*
 
    c. **Group DM scan** — call `slack_read_channel` for each known group DM channel ID below.
       These cannot be read via user ID; use the channel ID directly.
