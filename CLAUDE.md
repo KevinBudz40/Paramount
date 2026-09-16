@@ -15,8 +15,71 @@ When the user says **"scan my todos"**, **"scan for new tasks"**, or similar:
    with `received_time` >= cursor email timestamp. For each email, extract Kevin action items
    from subject + body.
 
-4. **Slack** — use `slack_search_public_and_private` to search for messages mentioning Kevin
-   or assigning him tasks since the cursor timestamp.
+4. **Slack** — two passes:
+
+   a. **Mentions search** — run `slack_search_public_and_private` twice:
+      - `to:<@U0BA98BHRSQ> after:<date>` (user ID mentions)
+      - `@kebudzis after:<date>` (username handle — some group DMs use this instead)
+
+   b. **Direct message scan** — call `slack_read_channel` for each key contact below,
+      passing their user ID as `channel_id` with `oldest=<slack_unix_ts>`.
+      Extract any messages asking Kevin to do something or assigning him a task.
+
+      | Person | User ID |
+      |--------|---------|
+      | Sherwin Zhou | U0BPATG4Z8R |
+      | Ravi Vadlamudi | U0AKS2T36LW |
+      | Mansi Batra | U09LBNQJY74 |
+      | Maqbulhusen Malaiwala | U0BBT2RS2HY |
+      | Ravichandra Reddy Palikala | D0B9W0BKA4E |
+      | George Palahunik | U0AU6125V1D |
+      | Rajesh Khatri | U08QR2YJADV |
+      | Sean Walsh | W01239Y3BMG |
+      | Victoria Tragianopoulos | W013DHB44G5 |
+      | Heather Sands | U01KK5CHWTG |
+      | Christina Chiotis | W01435L4K0C |
+      | Patrick Shea | U0BQ3EJC6D7 |
+      | Vaidehi Patil | U0AKSTX3CBY |
+      | Sonam Mishra | U0B5J3P3950 |
+      | Vani Gutti | W011KA1BXU6 |
+      | Diane Gill | W01239W16FL |
+      | Balaji Krishnamurthy | W012FUB9F5X |
+      | Aditya Vaidya | U01D630C4N4 |
+      | Hemant Shrivastava | U099V32QXKJ |
+      | Karen Marx | U09BM5X11AM |
+      | Mayuri Panaganti | U08SN2B39DW |
+      | Pradheep Krishnaswamy | U09CW45855E |
+      | Sukriti Chawla | U0AKYHNDAKE |
+      | Awadhesh Pandit | U09706S8TTQ |
+      | Arpit Chauhan | U0991KLKMRU |
+      | Mukesh Sai Pabbisetty | U09EBQ6P6CC |
+      | Ashwin Ayancha | U090ZLH0SRH |
+      | Nishant Ashish | U092DSV5FK5 |
+      | Shyamkumar Mullaguri | W011YSN5TC1 |
+      | Priyanka Megotia | U0BRZDQ7SGZ |
+      | Gadangi Mounika | U09K7BEQEUC |
+      | Manoj Gadiraju | U0A4XA4TS3S |
+      | Somya Ranjan Das | U0BR4V9081J |
+      | Srimannarayana Arava | U0AC1GULPFW |
+      | Aaditya Sharma | U09GJA95WTF |
+      | Andy Kayyali | U09LM7AULLD |
+      | Stephen King | U0AL77DG8VA |
+      | Slackbot (reminders) | USLACKBOT |
+      *(Not found: Philipraja Francis, Upasana Chatterjee, Rob Raman, Zainab Murtaza Bharmal — not in workspace)*
+
+   c. **Group DM scan** — call `slack_read_channel` for each known group DM channel ID below.
+      These cannot be read via user ID; use the channel ID directly.
+
+      | Group DM | Channel ID | Members |
+      |----------|------------|---------|
+      | PoBo and RoBo Walkthrough | C0C0WG488US | George Palahunik, Karen Marx, Prashant Menon, Jeremiah Bolneo, Rob Clements, Sachin Sardana, Jeffany Abellanosa, Joyce Anne Tolentino |
+      | Viacom/PPC tracking (Patrick Szeto group) | C0BLFMURLGH | Karen Marx, Patrick Szeto, Brooke Tilton, Victoria Tragianopoulos, Derek Keegan |
+      | Patrick Shea + Sherwin Zhou | C0C1UP4TG49 | Patrick Shea, Sherwin Zhou |
+      | Isabella Bergloff + Rajesh Khatri | C0C18A824QN | Isabella Bergloff, Rajesh Khatri |
+      *(C0BMP7KCJ6B — Mansi/Maqbul/Ravichandra group DM — returns protocol parse error; unreadable via MCP)*
+
+      Convert the ISO cursor timestamp to a Unix timestamp for the `oldest` parameter
+      (e.g. `int(datetime.fromisoformat(cursor).timestamp())`).
 
 5. For each source item, extract action items as JSON objects with these keys:
    ```json
