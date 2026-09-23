@@ -51,7 +51,61 @@ _SKIP_DIR_FRAGMENTS = {"node_modules", ".git", "__pycache__", ".venv"}
 _SKIP_PATH_PREFIXES: list[str] = []
 
 # Specific filenames (stem only, case-insensitive) to always skip
-_SKIP_FILENAMES = {"r598 - cash detail report.xlsx"}
+# [2026-09-23] Added Asana attachment data dumps — raw extracts with no analytical value for RAG
+_SKIP_FILENAMES = {
+    "r598 - cash detail report.xlsx",
+    # Massive raw extracts
+    "dev5_est_usd_stu_nov25.xlsx",
+    "erp paramount wall walk digital board.xlsx",
+    "project_cost_1032.xlsx",
+    "customers p1 report 071725.xlsx",
+    "customers p1 report 071625.xlsx",
+    "copy of xxcbs_stu_remap_fusion_bal.xlsx",
+    "cbs news department mapping project 2025-final 02.02.26- michele.xlsx",
+    "cbs news department mapping project 2025-revised 02.23.26- michele.xlsx",
+    "ebs ap paid duplicate invoice header details.xlsx",
+    "fixed_asset_recon_report_ebs_pg_us_corp.xlsx",
+    "corporate - data validation fusion v sap all currencies_dec 24.xlsx",
+    "corporate - data validation fusion v sap all currencies_dec 24_v1 dev6_012726_oracle.xlsx",
+    "corporate - data validation fusion v sap all currencies_mar 25_v1 dev6 feb 1 2026.xlsx",
+    "corporate - data validation fusion v sap all currencies_mar 25_v1 dev6.xlsx",
+    "sap ppc_fbl5n_open ar as of 20260731_submitted.xlsx",
+    "ris load excel.xlsx",
+    "account segment mapping ebs to cloud coa.xlsx",
+    "p1 segment value mapping ebs to cloud coa.xlsx",
+    # Auto-generated system filenames
+    "zi315_ap_inv_extract_open_erp_hdr_20260819092025.xlsx",
+    "zi315_ap_inv_extract_open_erp_itm_20260819092025.xlsx",
+    "zi315_ap_inv_extract_open_ppc_hdr_20260819105911.xlsx",
+    "zi315_ap_inv_extract_open_ppc_itm_20260819105911.xlsx",
+    "uncacp20250922000012.xlsx",
+    "arzzcp20250723180959.v1.xlsx",
+    "fusion_irtr037_viacom_acl_payroll__00000248965_analysis.xlsx",
+    "fusion_irtr037_viacom_acl_payroll__00000251325_analysis.xlsx",
+    "fusion_irtr037_viacom_payroll__00000245175_analysis.xlsx",
+    "fusion_irtr037_viacom_payroll__00000247145_analysis.xlsx",
+    "fusion_irtr037_viacom_payroll__00000248745_analysis.xlsx",
+    "tvr58910_unpack_nov2025.xlsx",
+    "tvr58910_unpack_nov202510.xlsx",
+    "trc58810_unpack_nov20258.xlsx",
+    "pg_prism_dist_11_24001.xlsx",
+    # "Analysis for Balancing by Company" series — balance reconciliation data, not docs
+    "est_analysis for balancing by company.xlsx",
+    "prism_analysis for balancing by company.xlsx",
+    "trc_analysis for balancing by company.xlsx",
+    "tvr analysis for balancing by company.xlsx",
+    "it2_analysis for balancing by company.xlsx",
+    "cp_analysis for balancing by company.xlsx",
+    # Raw report output snapshots
+    "pg_fah_rpt058_supportingreferences_rpt (9).xlsx",
+    "importaccountingtrx_exceptions_834498.xlsx",
+    "subscription tax report tax oct25 sample.xlsx",
+    "3pr_sample_report_query.xlsx",
+    "pg_cm_rpt304_outstanding_check_balance_rpt_output(12).xlsx",
+    "pg_cm_rpt304_outstanding_check_balance_rpt_output(2).xlsx",
+    "pg_cm_rpt304_outstanding_check_balance_rpt_output_feb2.xlsx",
+    "copy of pg_cm_rpt304_outstanding_check_balance_rpt_output(7).xlsx",
+}
 
 
 # â”€â”€ SQLite tracker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
