@@ -129,7 +129,7 @@ def generate_answer(question: str, chunks: list[dict], history: list[dict] | Non
 
     kwargs = dict(
         model=_MODEL,
-        max_tokens=4096,  # increased from 2048 — responses were truncating mid-sentence
+        max_tokens=8192,  # increased from 4096 — "Would you like me to pull" suggestions were truncating mid-sentence
         system=_build_system(),
         messages=messages,
     )
