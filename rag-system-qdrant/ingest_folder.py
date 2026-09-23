@@ -45,7 +45,8 @@ _ALLOWED = {“.pdf”, “.docx”, “.xlsx”, “.csv”, “.pptx”, “.t
             “.svg”, “.vtt”, “.msg”, “.eml”}
 
 # Directory name fragments that cause a whole subtree to be skipped
-_SKIP_DIR_FRAGMENTS = {"node_modules", ".git", "__pycache__", ".venv"}
+# [2026-09-23] Added "sql" — SQL scripts moved to asana/sql subfolder, not useful for RAG
+_SKIP_DIR_FRAGMENTS = {"node_modules", ".git", "__pycache__", ".venv", "sql"}
 
 # Absolute path prefixes to exclude entirely (case-insensitive on Windows)
 _SKIP_PATH_PREFIXES: list[str] = []
