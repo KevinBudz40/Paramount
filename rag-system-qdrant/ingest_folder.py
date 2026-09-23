@@ -12,7 +12,10 @@ MD5 dedup: files whose content is identical to an already-ingested file are skip
 even when they live in a different folder, preventing duplicate chunks in the KB.
 """
 import argparse
+import email as _email_stdlib
 import hashlib
+import html
+import re
 import shutil
 import sqlite3
 import sys
@@ -37,8 +40,9 @@ _INTER_FILE_DELAY = 1.0            # seconds between embedding calls
 _MIN_FILE_BYTES = 1024             # skip files smaller than 1 KB
 
 # Explicit allowlist â€” ingestible file types
-_ALLOWED = {".pdf", ".docx", ".xlsx", ".csv", ".pptx", ".txt", ".md", ".json",
-            ".svg", ".vtt"}
+# [2026-09-23] Added .msg and .eml — Asana task attachments often contain project emails worth indexing
+_ALLOWED = {“.pdf”, “.docx”, “.xlsx”, “.csv”, “.pptx”, “.txt”, “.md”, “.json”,
+            “.svg”, “.vtt”, “.msg”, “.eml”}
 
 # Directory name fragments that cause a whole subtree to be skipped
 _SKIP_DIR_FRAGMENTS = {"node_modules", ".git", "__pycache__", ".venv"}
@@ -168,6 +172,67 @@ def _walk(folder: Path, out: list[Path], temp_roots: list[Path]) -> None:
         out.append(entry)
 
 
+# â”€â”€ Email extraction (.msg / .eml) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# [2026-09-23] Added to support .msg/.eml attachments downloaded from Asana tasks
+
+def _html_to_text(html_body: str) -> str:
+    “””Strip HTML tags and decode entities for plain-text indexing.”””
+    text = re.sub(r”<[^>]+>”, “ “, html_body)
+    text = html.unescape(text)
+    return re.sub(r”\s+”, “ “, text).strip()
+
+
+def _extract_eml(path: Path) -> str:
+    “””Extract subject + body text from a .eml file (RFC 2822).”””
+    with open(path, “rb”) as f:
+        msg = _email_stdlib.message_from_binary_file(f)
+
+    subject = msg.get(“Subject”, “”)
+    sender  = msg.get(“From”, “”)
+    date    = msg.get(“Date”, “”)
+    parts: list[str] = [f”Subject: {subject}”, f”From: {sender}”, f”Date: {date}”, “”]
+
+    for part in msg.walk():
+        ct = part.get_content_type()
+        if part.get_content_disposition() == “attachment”:
+            continue
+        if ct == “text/plain”:
+            payload = part.get_payload(decode=True)
+            if payload:
+                charset = part.get_content_charset() or “utf-8”
+                parts.append(payload.decode(charset, errors=”replace”))
+        elif ct == “text/html”:
+            payload = part.get_payload(decode=True)
+            if payload:
+                charset = part.get_content_charset() or “utf-8”
+                parts.append(_html_to_text(payload.decode(charset, errors=”replace”)))
+
+    return “\n”.join(parts)
+
+
+def _extract_msg(path: Path) -> str:
+    “””Extract subject + body text from an Outlook .msg file using extract-msg.”””
+    try:
+        import extract_msg  # type: ignore
+    except ImportError:
+        raise ImportError(
+            “extract-msg is required for .msg files: pip install extract-msg”
+        )
+    with extract_msg.openMsg(str(path)) as m:
+        subject = m.subject or “”
+        sender  = m.sender or “”
+        date    = str(m.date or “”)
+        body    = m.body or “”
+        # Fall back to HTML body if plain text is empty
+        if not body.strip() and hasattr(m, “htmlBody”) and m.htmlBody:
+            charset = “utf-8”
+            raw = m.htmlBody
+            if isinstance(raw, bytes):
+                raw = raw.decode(charset, errors=”replace”)
+            body = _html_to_text(raw)
+    return “\n”.join([f”Subject: {subject}”, f”From: {sender}”, f”Date: {date}”, “”, body])
+
+
 # â”€â”€ Ingestion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _ingest_file(
@@ -182,7 +247,13 @@ def _ingest_file(
     """
     _BATCH_SIZE = 500  # stay well under ChromaDB's 5461 limit
 
-    text = load_document(path)
+    # [2026-09-23] Route .msg/.eml through dedicated extractors instead of load_document
+    if path.suffix.lower() == ".eml":
+        text = _extract_eml(path)
+    elif path.suffix.lower() == ".msg":
+        text = _extract_msg(path)
+    else:
+        text = load_document(path)
     if not text or not text.strip():
         raise ValueError("empty content")
 
