@@ -168,6 +168,9 @@ _SKIP_FILENAMES = {
     "cmv-ctd bal sheet - pnl sv_jk_12152025.xlsx",
     "cmv-ctd bal sheet - pnl sv_jk_12162025.xlsx",
     "cmv-ctd bal sheet - pnl sv_jk_12222025.xlsx",
+    # [2026-09-23] BNA fixed asset production data dumps
+    "bna final_2025 with bonus_prod_5-11-26.xlsm",
+    "bna final_2025 without bonus_prod_5-15-26.xlsm",
     # [2026-09-23] Group G — raw AR/AP financial data extracts
     "ar open items with 4th currency.xlsx",
     "invoiced prior to vendor setup q3 2025 viacom.xlsx",
