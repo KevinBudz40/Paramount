@@ -400,6 +400,8 @@ def query_rag():
     chunks = expand_context(chunks, persist_dir=CHROMA_DIR)
 
     # [2026-08-31] Look up full_path from source_log.db so frontend can render clickable /open links
+    # [2026-09-23] Added LIKE fallback: chunker stores source=filename only, but source_log
+    # uses source_key=full_path, so exact match always failed for file-based chunks.
     _source_paths: dict[str, str] = {}
     try:
         import sqlite3 as _sl3
@@ -407,9 +409,16 @@ def query_rag():
         _unique_sources = list({c["source"] for c in chunks})
         with _sl3.connect(_sl_db) as _slcon:
             for _sk in _unique_sources:
+                # Try exact match first (works for tactiq/* keys)
                 row = _slcon.execute(
                     "SELECT full_path FROM source_log WHERE source_key = ? LIMIT 1", (_sk,)
                 ).fetchone()
+                if not row:
+                    # Fallback: source is just the filename; match full_path ending with it
+                    row = _slcon.execute(
+                        "SELECT full_path FROM source_log WHERE full_path LIKE ? LIMIT 1",
+                        ("%" + _sk,)
+                    ).fetchone()
                 if row:
                     _source_paths[_sk] = row[0]
     except Exception:
