@@ -420,6 +420,41 @@ _SKIP_FILENAMES = {
     "q3_2249_errors.xlsx",
     "q3_2248_dept_errors.xlsx",
     "2027_costs_lines_duplicated.xlsx",
+    # [2026-09-25] Group Q — oversized chunk offenders (raw data dumps confirmed via chunk quality audit)
+    # CSV financial data exports — entire file lands as one giant chunk, useless for retrieval
+    "stripe jul26.csv",
+    "via_erp_0l_dtc_gl_bal_2025_05_001.csv",
+    "comcast_25jun2026.csv",
+    "sku-company code conversion aec 092426.csv",
+    "manual order upload template_subs.csv",
+    "paypal sportsline jul26.csv",
+    # XLSX security/config workbooks — tab-separated dumps of thousands of rows
+    "pg erp security configuration workbook - 10-1.xlsx",
+    # XLSX GL/trial balance extracts
+    "gl-sl ad sales report - pg br brl pl.xlsx",
+    "trial balance report - pg uk gbp usd rc - after.xlsx",
+    "trial balance report - pg uk gbp pl - after.xlsx",
+    "trial balance report - pg uk gbp pl - before.xlsx",
+    # TXT system interface files (SAP outbound files — huge raw data)
+    "gl_07232026121000_5255_1 (2).txt",
+    "arzzcp20260806120054.txt",
+    "inv_arzzip20250722091010.txt",
+    "02__citiboleto940br_20260710063643.snl50532d11783679827098051s.txt",
+    "arzzcp20260806111419.txt",
+    # XLSX mapping/config that rendered as unstructured tab dumps
+    "le_doc_seq_all_countries.xlsx",
+    "sdp invoice template sample.xlsx",
+    # XLSX user persona mapping (large tabular data, not narrative)
+    "erp - oct go-live prod - user to persona mapping.xlsx",
+    "erp - oct -1 prod - user to persona mapping.xlsx",
+    # XLSX expenditure categories — duplicate versioned pair
+    "proposed expenditure categories and expense types for oracle fusion p1.xlsx",
+    "proposed expenditure categories and expense types for oracle fusion.xlsx",
+    # XLSX revenue/royalty mapping — massive idoc child mapping files
+    "fd_i 121 idoc_child_mapping_royalty_statement v3.xlsx",
+    "ihe_fd_i 121 idoc_child_mapping_royalty_statement v3.xlsx",
+    # XLSX Stripe/PayPal financial extracts
+    "p+ stripe jun26.xlsx",
 }
 
 
