@@ -2,6 +2,7 @@
 # [2026-08-21] Fresh rebuild ingest — Phase 4a + Phase 4b + local_docs only
 # [2026-08-22] Qdrant migration: bypass Flask entirely — chunk + embed + write directly to Qdrant.
 # Flask is NOT needed for ingest. Memory stays lean because each file is processed and released.
+# [2026-10-11] Added email attachments watch root (C:\ParamountRAG\outlook\attachments\email)
 
 import gc
 import subprocess
@@ -17,6 +18,7 @@ ingest_batched.WATCH_ROOTS = [
     Path(r"C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4a October 2026 Go-Live"),
     Path(r"C:\Users\kevin\Paramount\Paramount Oracle Assessment - ERP Phase 4b January 2027 Go-Live"),
     Path(r"C:\Paramount\local_docs"),
+    Path(r"C:\ParamountRAG\outlook\attachments\email"),
 ]
 
 from ingest_batched import collect_new_files
