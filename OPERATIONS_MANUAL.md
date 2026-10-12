@@ -77,6 +77,7 @@ C:\GIT\
 ├── rag-system\                   ← PRESERVED revert path (old ChromaDB Flask app)
 ├── ingest_phase4a_4b_local.py    ← PRIMARY document ingest (direct to Qdrant, no Flask)
 ├── ingest_emails_batched.py      ← PRIMARY email ingest (direct to Qdrant, no Flask)
+├── ingest_calendar_batched.py    ← PRIMARY calendar ingest (direct to Qdrant, no Flask)
 ├── prep_qdrant_db.py             ← One-time: create qdrant_db with skip_list from chroma_db
 ├── scan_todos.py                 ← Kevin_Todo.xlsx dedup + append layer
 ├── add_todo.py                   ← Manually append a single task to Kevin_Todo.xlsx
@@ -249,6 +250,48 @@ add_skip("filename.xlsx", "filename", "Raw data dump")
 
 ---
 
+## 5b. Calendar Ingest
+
+**Script:** `C:\GIT\ingest_calendar_batched.py`  
+**Input:** `C:\ParamountRAG\outlook\calendar\meetings.json` (exported by `sync_outlook.py`)  
+**Flask required:** NO — writes directly to Qdrant
+
+```powershell
+# Step 1 — export from Outlook:
+python C:\ParamountRAG\scripts\sync_outlook.py --calendar
+
+# Step 2 — ingest into Qdrant:
+python C:\GIT\ingest_calendar_batched.py
+```
+
+---
+
+## 5c. Slack Ingest (added 2026-10-12)
+
+**Script:** `C:\GIT\ingest_slack.py`  
+**Input:** `C:\ParamountRAG\slack\*.json` — one file per conversation  
+**Flask required:** NO — writes directly to Qdrant. Stop Streamlit/Flask first.
+
+The Slack MCP connector can't be called from Python, so export is done **in a Claude Code session**:
+ask Claude to "pull Slack since <date>" → it reads each conversation via `slack_read_channel`
+and writes/updates the JSON files. Then:
+
+```
+python C:\GIT\ingest_slack.py           # dry run — counts + sample
+python C:\GIT\ingest_slack.py --apply   # write
+```
+
+- Also runs automatically as **Step 4 of `ingest_all.py`** (skip with `--skip-slack`) — ingests whatever JSON is on disk.
+- One doc per conversation-day, source = `slack:<conversation>:<YYYY-MM-DD>`, `doc_type = "Slack"`
+- Idempotent (re-run upserts same IDs). Skips days < 150 chars of text and anything before 2026-06-01.
+- **Workspace:** connector is signed into **Skydance** (Paramount grid) only. Oracle One channels
+  (e.g. `#psky_45_ppc_viacom`, C0BPPML1ZFS) and DMs with Oracle colleagues are NOT reachable —
+  `slack_read_channel` returns an SSE parse error.
+- Corporate channels (#announcements etc.) are curated by hand into `corp-channels-operational.json` —
+  Aim High newsletters are excluded as noise.
+
+---
+
 ## 6. Meeting Transcription & Ingest
 
 ### From MP4 recordings (Whisper transcription):
@@ -310,6 +353,12 @@ A Claude tool-use agent that iteratively searches Qdrant (read-only).
 **Model:** `claude-opus-4-8` with adaptive thinking  
 **Scripts:** `C:\ParamountRAG\scripts\agent.py` + `app_agent.py`
 
+**Search modes (added 2026-09-28):** sidebar toggle, default ⚡ Quick.
+- ⚡ **Quick** — 2 search rounds, 8 results, `effort: low`, short cited answer + "Open items" (~15–30s)
+- 🔍 **Deep** — 8 search rounds, 15 results, `effort: xhigh`, full numbered briefing + Recommended Follow-Ups (slower, costlier than pre-2026-09-28)
+- "🔍 Go deeper" button under a Quick answer re-runs it in Deep mode. Settings live in `_MODES` in `agent.py`.
+- `fileWatcherType = "none"` in `.streamlit/config.toml` — **restart Streamlit after editing agent.py / app_agent.py**.
+
 **Qdrant lock:** Streamlit holds the lock while running. Stop it before any ingest or label_chunks run.
 
 **Source links:** Links in the Streamlit UI use `file:///` URLs. Chrome blocks navigation
@@ -318,7 +367,7 @@ run Flask (`localhost:5000`) and switch link format back to `/open?path=...`.
 
 **CLI mode (no Streamlit):**
 ```
-python C:\ParamountRAG\scripts\agent_query_to_file.py "your question" --heading "Section Title"
+python C:\ParamountRAG\scripts\agent_query_to_file.py "your question" --heading "Section Title" [--mode quick]   # default --mode deep
 ```
 Output appends to `C:\Paramount\ARAG_DOCS\ARAG_Briefing_YYYY-MM-DD.md`.
 
@@ -392,6 +441,38 @@ Each call creates a new timestamped folder.
 4. Re-run email ingest for any emails since the backup
 5. Re-run document ingest for any docs since the backup
 
+### Full Rebuild from scratch:
+1. Stop Flask and Streamlit
+2. Backup current DB (see above)
+3. Rename `C:\GIT\qdrant_db` → `qdrant_db_pre_rebuild_YYYYMMDD`
+4. `python C:\GIT\prep_qdrant_db.py` — creates fresh DB with skip list
+4b. **Copy skip list from old DB into new DB (CRITICAL — do NOT skip):**
+    ```python
+    import sqlite3
+    old = sqlite3.connect(r'C:\GIT\qdrant_db_pre_rebuild_YYYYMMDD\source_log.db')
+    new = sqlite3.connect(r'C:\GIT\qdrant_db\source_log.db')
+    rows = old.execute("SELECT pattern, match_type, note, added_at FROM skip_list").fetchall()
+    new.executemany("INSERT OR IGNORE INTO skip_list (pattern, match_type, note, added_at) VALUES (?,?,?,?)", rows)
+    new.commit(); old.close(); new.close()
+    print(f"Copied {len(rows)} skip list entries")
+    ```
+    **Why:** The skip list lives inside source_log.db. A fresh rebuild starts with an empty
+    skip list — any files previously blocked (e.g. GL recon dumps, data dumps) will be
+    ingested again unless you copy the entries over before the first ingest run.
+5. **Export from Outlook FIRST (essential — do NOT skip):**
+   ```powershell
+   python C:\ParamountRAG\scripts\sync_outlook.py --mail --full
+   python C:\ParamountRAG\scripts\sync_outlook.py --calendar
+   ```
+   `--mail --full` ignores the cursor and exports ALL email history (not just since last sync).  
+   `--all` without `--full` only does incremental mail — **wrong for a full rebuild**.  
+   Calendar is always full-range so `--calendar` alone is sufficient.
+6. Ingest documents: `python C:\GIT\ingest_phase4a_4b_local.py`
+7. Ingest emails: `python C:\GIT\ingest_emails_batched.py`
+8. Ingest calendar: `python C:\GIT\ingest_calendar_batched.py`
+9. Ingest Tactiq meetings via MCP in-session (sync_tactiq.py subprocess is broken)
+10. Restart Streamlit: `streamlit run C:\ParamountRAG\scripts\app_agent.py`
+
 ### Revert to ChromaDB (see §16):
 Both `C:\GIT\chroma_db` and `C:\GIT\rag-system` are preserved and untouched.
 
@@ -423,7 +504,7 @@ Flask is only needed for the dashboard and `/open` file links. Ingest and ARAG w
 ## 13. Critical Rules — What Not To Do
 
 1. **Don't use `--full` for routine email syncs**  
-   Use `sync_outlook.py --mail` (incremental). `--full` re-exports all 600+ emails.
+   Use `sync_outlook.py --mail` (incremental). `--full` re-exports all 3,000+ emails — only correct for a full rebuild (§11).
 
 2. **Don't use Graph API for email**  
    `ingest_email.py` uses Microsoft Graph API. Always use `sync_outlook.py` (COM/Outlook).
