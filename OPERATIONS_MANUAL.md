@@ -287,6 +287,10 @@ python C:\GIT\ingest_slack.py --apply   # write
 - **Workspace:** connector is signed into **Skydance** (Paramount grid) only. Oracle One channels
   (e.g. `#psky_45_ppc_viacom`, C0BPPML1ZFS) and DMs with Oracle colleagues are NOT reachable —
   `slack_read_channel` returns an SSE parse error.
+- **Oracle One via export zip:** `python -I C:\GIT\convert_slack_export.py <zip>` converts a Slack
+  partial-archive zip (messages.jsonl + coverage.json) into `oracle-one-*.json` files here, then run
+  `ingest_slack.py --apply`. Project channels + DMs only (edit `INCLUDE_CHANNELS`); Oracle corporate
+  channels excluded. First load 2026-10-12: 29 conversations, 2,672 msgs, +549 chunks.
 - Corporate channels (#announcements etc.) are curated by hand into `corp-channels-operational.json` —
   Aim High newsletters are excluded as noise.
 
